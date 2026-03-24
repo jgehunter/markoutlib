@@ -43,3 +43,25 @@ def test_curve_with_by(viz_result):
     fig = viz_result.plot.curve(by="counterparty")
     assert isinstance(fig, go.Figure)
     assert len(fig.data) >= 3
+
+
+def test_heatmap_returns_figure(viz_result):
+    fig = viz_result.plot.heatmap(by="counterparty")
+    assert isinstance(fig, go.Figure)
+
+
+def test_distribution_returns_figure(viz_result):
+    from markoutlib._horizons import seconds
+    fig = viz_result.plot.distribution(horizon=seconds(5))
+    assert isinstance(fig, go.Figure)
+
+
+def test_comparison_returns_figure(viz_result):
+    fig = viz_result.plot.comparison(by="counterparty")
+    assert isinstance(fig, go.Figure)
+
+
+def test_scatter_returns_figure(viz_result):
+    from markoutlib._horizons import seconds
+    fig = viz_result.plot.scatter(x="size", horizon=seconds(5))
+    assert isinstance(fig, go.Figure)
