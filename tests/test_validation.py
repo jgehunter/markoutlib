@@ -45,8 +45,9 @@ def test_quotes_none_with_tick_clock(simple_trades):
 def test_quotes_none_ok_with_trade_clock(simple_trades):
     from markoutlib._compute import compute
 
-    with pytest.raises(NotImplementedError):
-        compute(trades=simple_trades, quotes=None, horizons=trades(5))
+    # Trade-clock should work without quotes — no error
+    result = compute(trades=simple_trades, quotes=None, horizons=trades(5))
+    assert result.to_polars().shape[0] == len(simple_trades)
 
 
 def test_by_column_missing_in_trades(simple_trades, simple_quotes):
