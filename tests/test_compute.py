@@ -167,3 +167,109 @@ def test_trade_clock_partitioned():
     # MSFT trades should only see MSFT future mids (going down)
     msft = df.filter(pl.col("symbol") == "MSFT").filter(pl.col("markout").is_not_null())
     assert all(m < 0 for m in msft["markout"].to_list())
+
+
+def test_tick_clock_basic():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import ticks
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base],
+            "side": [1],
+            "price": [100.0],
+            "mid": [100.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    # 5 quotes: one AT trade time (should NOT count), four AFTER
+    quotes_df = pl.DataFrame(
+        {
+            "timestamp": [
+                base,
+                base + timedelta(milliseconds=100),
+                base + timedelta(milliseconds=200),
+                base + timedelta(milliseconds=300),
+                base + timedelta(milliseconds=400),
+            ],
+            "mid": [100.0, 100.5, 101.0, 101.5, 102.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(2))
+    df = result.to_polars()
+
+    # ticks(2) = 2nd quote strictly after trade = +200ms = mid 101.0
+    assert df["future_mid"][0] == 101.0
+
+
+def test_tick_clock_null_when_insufficient_ticks():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import ticks
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base],
+            "side": [1],
+            "price": [100.0],
+            "mid": [100.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    quotes_df = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(milliseconds=100)],
+            "mid": [100.5],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(5))
+    df = result.to_polars()
+
+    assert df["future_mid"][0] is None
+    assert df["markout"][0] is None
+
+
+def test_tick_clock_partitioned():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import ticks
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base, base],
+            "side": [1, 1],
+            "price": [100.0, 200.0],
+            "mid": [100.0, 200.0],
+            "symbol": ["AAPL", "MSFT"],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    quotes_df = pl.DataFrame(
+        {
+            "timestamp": [
+                base + timedelta(milliseconds=100),
+                base + timedelta(milliseconds=100),
+                base + timedelta(milliseconds=200),
+                base + timedelta(milliseconds=200),
+            ],
+            "mid": [101.0, 199.0, 102.0, 198.0],
+            "symbol": ["AAPL", "MSFT", "AAPL", "MSFT"],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(
+        trades=trades_df, quotes=quotes_df, horizons=ticks(1), by="symbol"
+    )
+    df = result.to_polars()
+
+    aapl = df.filter(pl.col("symbol") == "AAPL")
+    msft = df.filter(pl.col("symbol") == "MSFT")
+
+    assert aapl["future_mid"][0] == 101.0
+    assert msft["future_mid"][0] == 199.0

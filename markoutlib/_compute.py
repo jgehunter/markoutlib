@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 from datetime import timedelta
 
 import polars as pl
@@ -216,6 +217,135 @@ def _compute_trade_clock(
     )
 
 
+def _tick_clock_partition(
+    trade_timestamps: list[int],
+    quote_timestamps: list[int],
+    quote_mids: list[float],
+    n: int,
+) -> list[float | None]:
+    """Compute tick-clock future mids for one partition.
+
+    Args:
+        trade_timestamps: Sorted trade timestamps as integer microseconds.
+        quote_timestamps: Sorted quote timestamps as integer microseconds.
+        quote_mids: Quote mid prices aligned with quote_timestamps.
+        n: Number of ticks (quote updates) forward.
+
+    Returns:
+        List of future mid values, None where insufficient ticks exist.
+    """
+    result: list[float | None] = []
+    num_quotes = len(quote_timestamps)
+    for ts in trade_timestamps:
+        idx = bisect.bisect_right(quote_timestamps, ts)
+        target = idx + n - 1
+        if target < num_quotes:
+            result.append(quote_mids[target])
+        else:
+            result.append(None)
+    return result
+
+
+def _compute_tick_clock(
+    trades: pl.DataFrame,
+    quotes: pl.DataFrame,
+    horizon: Horizon,
+    unit: Unit,
+    by_cols: list[str] | None,
+) -> pl.DataFrame:
+    """Compute markout for a single tick-clock horizon.
+
+    Args:
+        trades: DataFrame of trade records with required columns.
+        quotes: DataFrame of quote records, pre-sorted by timestamp.
+        horizon: Horizon specifying how many ticks forward to measure.
+        unit: Output unit, either BPS or PRICE.
+        by_cols: Optional partition columns.
+
+    Returns:
+        trades DataFrame with future_mid, markout, horizon_type, and
+        horizon_value columns added.
+    """
+    n = int(horizon.value)
+
+    if by_cols:
+        # Process each partition separately
+        future_mids: list[float | None] = [None] * trades.height
+        trade_idx_col = "__trade_idx__"
+        trades_indexed = trades.with_row_index(trade_idx_col)
+
+        for group_keys, trades_group in trades_indexed.group_by(by_cols):
+            # Build filter for this partition's quotes
+            if len(by_cols) == 1:
+                gk = (
+                    (group_keys,)
+                    if not isinstance(group_keys, tuple)
+                    else group_keys
+                )
+            else:
+                gk = (
+                    group_keys
+                    if isinstance(group_keys, tuple)
+                    else (group_keys,)
+                )
+
+            q_filter = pl.lit(True)
+            for col, val in zip(by_cols, gk, strict=True):
+                q_filter = q_filter & (pl.col(col) == val)
+            q_part = quotes.filter(q_filter).sort("timestamp")
+
+            q_ts = q_part["timestamp"].cast(pl.Int64).to_list()
+            q_mids = q_part["mid"].to_list()
+            t_ts = trades_group["timestamp"].cast(pl.Int64).to_list()
+            t_indices = trades_group[trade_idx_col].to_list()
+
+            part_mids = _tick_clock_partition(t_ts, q_ts, q_mids, n)
+            for orig_idx, fm in zip(t_indices, part_mids, strict=True):
+                future_mids[orig_idx] = fm
+
+        result = trades.with_columns(
+            pl.Series("future_mid", future_mids, dtype=pl.Float64),
+        )
+    else:
+        q_ts = quotes["timestamp"].cast(pl.Int64).to_list()
+        q_mids = quotes["mid"].to_list()
+        t_ts = trades["timestamp"].cast(pl.Int64).to_list()
+
+        future_mids_list = _tick_clock_partition(t_ts, q_ts, q_mids, n)
+        result = trades.with_columns(
+            pl.Series("future_mid", future_mids_list, dtype=pl.Float64),
+        )
+
+    null_mid = pl.col("mid").is_null() | (pl.col("mid") == 0)
+
+    if unit == Unit.BPS:
+        markout_expr = (
+            pl.when(null_mid | pl.col("future_mid").is_null())
+            .then(pl.lit(None, dtype=pl.Float64))
+            .otherwise(
+                pl.col("side").cast(pl.Float64)
+                * (pl.col("future_mid") - pl.col("mid"))
+                / pl.col("mid")
+                * 10_000
+            )
+        )
+    else:
+        markout_expr = (
+            pl.when(null_mid | pl.col("future_mid").is_null())
+            .then(pl.lit(None, dtype=pl.Float64))
+            .otherwise(
+                pl.col("side").cast(pl.Float64)
+                * (pl.col("future_mid") - pl.col("mid"))
+            )
+        )
+
+    return result.with_columns(
+        markout_expr.alias("markout"),
+        pl.lit(horizon.type.value).alias("horizon_type"),
+        pl.lit(horizon.value).alias("horizon_value"),
+    )
+
+
 def compute(
     trades: pl.DataFrame,
     quotes: pl.DataFrame | None = None,
@@ -266,8 +396,9 @@ def compute(
             chunk = _compute_trade_clock(trades, horizon, parsed_unit, by_cols)
             results.append(chunk)
         else:
-            msg = f"{horizon.type.value}-clock horizons not yet implemented"
-            raise NotImplementedError(msg)
+            assert quotes is not None  # guaranteed by validation
+            chunk = _compute_tick_clock(trades, quotes, horizon, parsed_unit, by_cols)
+            results.append(chunk)
 
     combined = pl.concat(results) if len(results) > 1 else results[0]
     return MarkoutResult(data=combined, unit=parsed_unit.value)
