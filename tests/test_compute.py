@@ -37,9 +37,11 @@ def _make_known_answer_data():
         quote_times.append(t + timedelta(seconds=5))
         quote_mids.append(future_mid)
 
-    quotes = pl.DataFrame(
-        {"timestamp": quote_times, "mid": quote_mids}
-    ).cast({"timestamp": pl.Datetime("us")}).sort("timestamp")
+    quotes = (
+        pl.DataFrame({"timestamp": quote_times, "mid": quote_mids})
+        .cast({"timestamp": pl.Datetime("us")})
+        .sort("timestamp")
+    )
 
     return trades, quotes
 
@@ -101,9 +103,7 @@ def test_auditability():
     result = compute(trades=trades, quotes=quotes, horizons=seconds(5))
     df = result.to_polars().filter(pl.col("markout").is_not_null())
 
-    recomputed = (
-        df["side"] * (df["future_mid"] - df["mid"]) / df["mid"] * 10_000
-    )
+    recomputed = df["side"] * (df["future_mid"] - df["mid"]) / df["mid"] * 10_000
     diff = (df["markout"] - recomputed).abs().max()
     assert diff < 1e-10, f"auditability check failed, max diff = {diff}"
 
@@ -263,9 +263,7 @@ def test_tick_clock_partitioned():
         }
     ).cast({"timestamp": pl.Datetime("us")})
 
-    result = compute(
-        trades=trades_df, quotes=quotes_df, horizons=ticks(1), by="symbol"
-    )
+    result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(1), by="symbol")
     df = result.to_polars()
 
     aapl = df.filter(pl.col("symbol") == "AAPL")

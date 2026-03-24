@@ -117,28 +117,31 @@ def _compute_wall_clock(
 
     # Compute markout
     if unit == Unit.BPS:
-        markout_expr = pl.when(
-            pl.col("mid").is_null()
-            | (pl.col("mid") == 0)
-            | pl.col("future_mid").is_null()
-        ).then(
-            pl.lit(None, dtype=pl.Float64)
-        ).otherwise(
-            pl.col("side").cast(pl.Float64)
-            * (pl.col("future_mid") - pl.col("mid"))
-            / pl.col("mid")
-            * 10_000
+        markout_expr = (
+            pl.when(
+                pl.col("mid").is_null()
+                | (pl.col("mid") == 0)
+                | pl.col("future_mid").is_null()
+            )
+            .then(pl.lit(None, dtype=pl.Float64))
+            .otherwise(
+                pl.col("side").cast(pl.Float64)
+                * (pl.col("future_mid") - pl.col("mid"))
+                / pl.col("mid")
+                * 10_000
+            )
         )
     else:
-        markout_expr = pl.when(
-            pl.col("mid").is_null()
-            | (pl.col("mid") == 0)
-            | pl.col("future_mid").is_null()
-        ).then(
-            pl.lit(None, dtype=pl.Float64)
-        ).otherwise(
-            pl.col("side").cast(pl.Float64)
-            * (pl.col("future_mid") - pl.col("mid"))
+        markout_expr = (
+            pl.when(
+                pl.col("mid").is_null()
+                | (pl.col("mid") == 0)
+                | pl.col("future_mid").is_null()
+            )
+            .then(pl.lit(None, dtype=pl.Float64))
+            .otherwise(
+                pl.col("side").cast(pl.Float64) * (pl.col("future_mid") - pl.col("mid"))
+            )
         )
 
     joined = joined.with_columns(markout_expr.alias("markout"))
@@ -183,9 +186,7 @@ def _compute_trade_clock(
             pl.col("mid").shift(-n).over(by_cols).alias("future_mid")
         )
     else:
-        result = trades.with_columns(
-            pl.col("mid").shift(-n).alias("future_mid")
-        )
+        result = trades.with_columns(pl.col("mid").shift(-n).alias("future_mid"))
 
     null_mid = pl.col("mid").is_null() | (pl.col("mid") == 0)
 
@@ -205,8 +206,7 @@ def _compute_trade_clock(
             pl.when(null_mid | pl.col("future_mid").is_null())
             .then(pl.lit(None, dtype=pl.Float64))
             .otherwise(
-                pl.col("side").cast(pl.Float64)
-                * (pl.col("future_mid") - pl.col("mid"))
+                pl.col("side").cast(pl.Float64) * (pl.col("future_mid") - pl.col("mid"))
             )
         )
 
@@ -277,17 +277,9 @@ def _compute_tick_clock(
         for group_keys, trades_group in trades_indexed.group_by(by_cols):
             # Build filter for this partition's quotes
             if len(by_cols) == 1:
-                gk = (
-                    (group_keys,)
-                    if not isinstance(group_keys, tuple)
-                    else group_keys
-                )
+                gk = (group_keys,) if not isinstance(group_keys, tuple) else group_keys
             else:
-                gk = (
-                    group_keys
-                    if isinstance(group_keys, tuple)
-                    else (group_keys,)
-                )
+                gk = group_keys if isinstance(group_keys, tuple) else (group_keys,)
 
             q_filter = pl.lit(True)
             for col, val in zip(by_cols, gk, strict=True):
@@ -334,8 +326,7 @@ def _compute_tick_clock(
             pl.when(null_mid | pl.col("future_mid").is_null())
             .then(pl.lit(None, dtype=pl.Float64))
             .otherwise(
-                pl.col("side").cast(pl.Float64)
-                * (pl.col("future_mid") - pl.col("mid"))
+                pl.col("side").cast(pl.Float64) * (pl.col("future_mid") - pl.col("mid"))
             )
         )
 

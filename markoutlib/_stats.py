@@ -19,9 +19,7 @@ _MIN_BOOTSTRAP_N = 30
 _ANDREWS_CONSTANT = 1.1447
 
 
-def weighted_mean(
-    values: NDArray[np.floating], weights: NDArray[np.floating]
-) -> float:
+def weighted_mean(values: NDArray[np.floating], weights: NDArray[np.floating]) -> float:
     """Compute weighted arithmetic mean.
 
     Args:
@@ -251,9 +249,7 @@ def fit_exponential_decay(
 
     try:
         p0 = [float(markouts[-1]), float(horizons[n // 2])]
-        popt, _ = optimize.curve_fit(
-            _model, horizons, markouts, p0=p0, maxfev=5000
-        )
+        popt, _ = optimize.curve_fit(_model, horizons, markouts, p0=p0, maxfev=5000)
         terminal, tau = float(popt[0]), float(popt[1])
     except (RuntimeError, ValueError):
         return _NO_FIT

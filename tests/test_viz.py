@@ -52,6 +52,7 @@ def test_heatmap_returns_figure(viz_result):
 
 def test_distribution_returns_figure(viz_result):
     from markoutlib._horizons import seconds
+
     fig = viz_result.plot.distribution(horizon=seconds(5))
     assert isinstance(fig, go.Figure)
 
@@ -63,5 +64,6 @@ def test_comparison_returns_figure(viz_result):
 
 def test_scatter_returns_figure(viz_result):
     from markoutlib._horizons import seconds
+
     fig = viz_result.plot.scatter(x="size", horizon=seconds(5))
     assert isinstance(fig, go.Figure)

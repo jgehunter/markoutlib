@@ -37,8 +37,7 @@ def plot_scatter(
 
     data = result.to_polars()
     filtered = data.filter(
-        (pl.col("horizon_type") == h.type.value)
-        & (pl.col("horizon_value") == h.value)
+        (pl.col("horizon_type") == h.type.value) & (pl.col("horizon_value") == h.value)
     ).drop_nulls(subset=[x, "markout"])
 
     x_vals = filtered[x].to_list()

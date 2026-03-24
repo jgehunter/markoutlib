@@ -37,8 +37,7 @@ def plot_distribution(
 
     data = result.to_polars()
     filtered = data.filter(
-        (pl.col("horizon_type") == h.type.value)
-        & (pl.col("horizon_value") == h.value)
+        (pl.col("horizon_type") == h.type.value) & (pl.col("horizon_value") == h.value)
     )
 
     fig = go.Figure()
@@ -58,9 +57,7 @@ def plot_distribution(
         segments = filtered[by].unique(maintain_order=True).to_list()
         for idx, seg in enumerate(segments):
             seg_markouts = (
-                filtered.filter(pl.col(by) == seg)["markout"]
-                .drop_nulls()
-                .to_list()
+                filtered.filter(pl.col(by) == seg)["markout"].drop_nulls().to_list()
             )
             fig.add_trace(
                 go.Histogram(

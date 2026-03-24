@@ -76,9 +76,9 @@ def test_by_column_missing_in_quotes(simple_trades, simple_quotes):
 def test_timestamp_dtype_mismatch(simple_trades):
     from markoutlib._compute import compute
 
-    quotes_ns = pl.DataFrame(
-        {"timestamp": [1000000000], "mid": [1024.0]}
-    ).cast({"timestamp": pl.Datetime("ns")})
+    quotes_ns = pl.DataFrame({"timestamp": [1000000000], "mid": [1024.0]}).cast(
+        {"timestamp": pl.Datetime("ns")}
+    )
     with pytest.raises(ValueError, match="timestamp column type mismatch"):
         compute(trades=simple_trades, quotes=quotes_ns, horizons=seconds(5))
 

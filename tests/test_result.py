@@ -16,8 +16,7 @@ def simple_result():
     data = pl.DataFrame(
         {
             "timestamp": [
-                datetime(2024, 1, 15, 10, 0, 0) + timedelta(seconds=i)
-                for i in range(n)
+                datetime(2024, 1, 15, 10, 0, 0) + timedelta(seconds=i) for i in range(n)
             ],
             "side": [1] * n,
             "price": [100.0] * n,
@@ -36,9 +35,19 @@ def simple_result():
 def test_curve_returns_expected_columns(simple_result):
     df = simple_result.curve()
     expected = {
-        "horizon_type", "horizon_value", "markout_mean", "markout_median",
-        "markout_ci_lower", "markout_ci_upper", "markout_q25", "markout_q75",
-        "skew", "kurtosis", "t_stat", "p_value", "n_obs",
+        "horizon_type",
+        "horizon_value",
+        "markout_mean",
+        "markout_median",
+        "markout_ci_lower",
+        "markout_ci_upper",
+        "markout_q25",
+        "markout_q75",
+        "skew",
+        "kurtosis",
+        "t_stat",
+        "p_value",
+        "n_obs",
     }
     assert expected.issubset(set(df.columns))
 
@@ -74,9 +83,7 @@ def test_half_life_on_exponential_data():
                     "mid": 100.0,
                     "horizon_type": "wall",
                     "horizon_value": float(h),
-                    "future_mid": (
-                        100.0 + terminal * (1 - np.exp(-h / tau)) * 0.01
-                    ),
+                    "future_mid": (100.0 + terminal * (1 - np.exp(-h / tau)) * 0.01),
                     "markout": terminal * (1 - np.exp(-h / tau)),
                 }
             )
@@ -99,12 +106,18 @@ def test_half_life_mixed_horizon_types_does_not_converge():
     rows = []
     for h_type, h_val in [("wall", 1.0), ("wall", 5.0), ("trade", 10.0)]:
         for i in range(50):
-            rows.append({
-                "timestamp": datetime(2024, 1, 15, 10, 0, 0) + timedelta(seconds=i),
-                "side": 1, "price": 100.0, "mid": 100.0,
-                "horizon_type": h_type, "horizon_value": h_val,
-                "future_mid": 100.01, "markout": 1.0,
-            })
+            rows.append(
+                {
+                    "timestamp": datetime(2024, 1, 15, 10, 0, 0) + timedelta(seconds=i),
+                    "side": 1,
+                    "price": 100.0,
+                    "mid": 100.0,
+                    "horizon_type": h_type,
+                    "horizon_value": h_val,
+                    "future_mid": 100.01,
+                    "markout": 1.0,
+                }
+            )
     data = pl.DataFrame(rows).cast({"timestamp": pl.Datetime("us")})
     result = MarkoutResult(data, "bps")
     hl = result.half_life()
@@ -114,8 +127,12 @@ def test_half_life_mixed_horizon_types_does_not_converge():
 def test_test_returns_expected_columns(simple_result):
     df = simple_result.test("counterparty")
     expected = {
-        "segment", "segment_n_obs", "segment_mean",
-        "complement_mean", "test_stat", "test_p_value",
+        "segment",
+        "segment_n_obs",
+        "segment_mean",
+        "complement_mean",
+        "test_stat",
+        "test_p_value",
     }
     assert expected.issubset(set(df.columns))
     assert df.shape[0] == 3
@@ -124,8 +141,11 @@ def test_test_returns_expected_columns(simple_result):
 def test_compare_returns_expected_columns(simple_result):
     df = simple_result.compare(weight="size")
     expected = {
-        "horizon_type", "horizon_value",
-        "markout_unweighted", "markout_weighted", "n_obs",
+        "horizon_type",
+        "horizon_value",
+        "markout_unweighted",
+        "markout_weighted",
+        "n_obs",
     }
     assert expected.issubset(set(df.columns))
 

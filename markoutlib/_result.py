@@ -71,9 +71,7 @@ class MarkoutResult:
             group_cols.append(by)
 
         rows: list[dict] = []
-        for keys, group_df in self._data.group_by(
-            group_cols, maintain_order=True
-        ):
+        for keys, group_df in self._data.group_by(group_cols, maintain_order=True):
             markouts = group_df["markout"].drop_nulls().to_numpy()
             n_obs = len(markouts)
             if n_obs == 0:
@@ -85,9 +83,7 @@ class MarkoutResult:
 
             # Mean (weighted or unweighted).
             if weight is not None:
-                w: NDArray[np.floating] = (
-                    group_df[weight].drop_nulls().to_numpy()
-                )
+                w: NDArray[np.floating] = group_df[weight].drop_nulls().to_numpy()
                 row["markout_mean"] = weighted_mean(markouts, w)
                 ci_weights = w
             else:
@@ -147,9 +143,8 @@ class MarkoutResult:
         if len(horizon_types) > 1:
             return _NO_FIT
 
-        agg = (
-            self._data.group_by("horizon_value", maintain_order=True)
-            .agg(pl.col("markout").mean())
+        agg = self._data.group_by("horizon_value", maintain_order=True).agg(
+            pl.col("markout").mean()
         )
         horizons = agg["horizon_value"].to_numpy().astype(float)
         markouts = agg["markout"].to_numpy().astype(float)
@@ -171,14 +166,16 @@ class MarkoutResult:
         ):
             sub = MarkoutResult(segment_df, self._unit)
             fit = sub.half_life()
-            rows.append({
-                by: segment_val,
-                "half_life": fit.half_life,
-                "time_constant": fit.time_constant,
-                "terminal_markout": fit.terminal_markout,
-                "r_squared": fit.r_squared,
-                "converged": fit.converged,
-            })
+            rows.append(
+                {
+                    by: segment_val,
+                    "half_life": fit.half_life,
+                    "time_constant": fit.time_constant,
+                    "terminal_markout": fit.terminal_markout,
+                    "r_squared": fit.r_squared,
+                    "converged": fit.converged,
+                }
+            )
         return pl.DataFrame(rows)
 
     # ------------------------------------------------------------------
@@ -216,20 +213,20 @@ class MarkoutResult:
             diff, p_val = permutation_test(
                 seg_markouts, comp_markouts, n_permutations=n_permutations
             )
-            rows.append({
-                "segment": seg,
-                "segment_n_obs": len(seg_markouts),
-                "segment_mean": float(np.mean(seg_markouts)),
-                "complement_mean": float(np.mean(comp_markouts)),
-                "test_stat": diff,
-                "test_p_value": p_val,
-            })
+            rows.append(
+                {
+                    "segment": seg,
+                    "segment_n_obs": len(seg_markouts),
+                    "segment_mean": float(np.mean(seg_markouts)),
+                    "complement_mean": float(np.mean(comp_markouts)),
+                    "test_stat": diff,
+                    "test_p_value": p_val,
+                }
+            )
 
         return pl.DataFrame(rows)
 
-    def _test_pairwise(
-        self, column: str, n_permutations: int
-    ) -> pl.DataFrame:
+    def _test_pairwise(self, column: str, n_permutations: int) -> pl.DataFrame:
         """All-pairs permutation test with BH correction.
 
         Args:
@@ -257,13 +254,15 @@ class MarkoutResult:
                 diff, p_val = permutation_test(
                     a_marks, b_marks, n_permutations=n_permutations
                 )
-                rows.append({
-                    "segment_a": seg_a,
-                    "segment_b": seg_b,
-                    "diff_mean": diff,
-                    "test_stat": diff,
-                    "test_p_value_raw": p_val,
-                })
+                rows.append(
+                    {
+                        "segment_a": seg_a,
+                        "segment_b": seg_b,
+                        "diff_mean": diff,
+                        "test_stat": diff,
+                        "test_p_value_raw": p_val,
+                    }
+                )
 
         # Benjamini-Hochberg correction.
         m = len(rows)
@@ -273,9 +272,7 @@ class MarkoutResult:
             bh_adjusted = np.empty(m)
             for rank_idx, orig_idx in enumerate(order):
                 rank = rank_idx + 1
-                bh_adjusted[orig_idx] = min(
-                    p_vals[orig_idx] * m / rank, 1.0
-                )
+                bh_adjusted[orig_idx] = min(p_vals[orig_idx] * m / rank, 1.0)
             # Enforce monotonicity.
             for rank_idx in range(m - 2, -1, -1):
                 orig_idx = order[rank_idx]
@@ -309,9 +306,7 @@ class MarkoutResult:
             raise ValueError(msg)
 
         rows: list[dict] = []
-        for keys, group_df in self._data.group_by(
-            _GROUP_KEYS, maintain_order=True
-        ):
+        for keys, group_df in self._data.group_by(_GROUP_KEYS, maintain_order=True):
             markouts = group_df["markout"].drop_nulls().to_numpy()
             weights = group_df[weight].drop_nulls().to_numpy()
             n_obs = len(markouts)

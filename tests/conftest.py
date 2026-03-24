@@ -28,9 +28,7 @@ def simple_quotes() -> pl.DataFrame:
     n = 200
     return pl.DataFrame(
         {
-            "timestamp": [
-                base + timedelta(milliseconds=500 * i) for i in range(n)
-            ],
+            "timestamp": [base + timedelta(milliseconds=500 * i) for i in range(n)],
             "mid": [1024.0 + 0.001 * i for i in range(n)],
         }
     ).cast({"timestamp": pl.Datetime("us")})
