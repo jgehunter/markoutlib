@@ -106,3 +106,64 @@ def test_auditability():
     )
     diff = (df["markout"] - recomputed).abs().max()
     assert diff < 1e-10, f"auditability check failed, max diff = {diff}"
+
+
+def test_trade_clock_basic():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import trades as trades_h
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    t = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(seconds=i) for i in range(10)],
+            "side": [1] * 10,
+            "price": [100.0] * 10,
+            "mid": [100.0 + i for i in range(10)],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=t, quotes=None, horizons=trades_h(3))
+    df = result.to_polars()
+
+    # Trade 0: mid=100, future_mid=103 (trade 3's mid)
+    row0 = df.row(0, named=True)
+    assert row0["future_mid"] == 103.0
+    assert row0["markout"] is not None
+
+    # Trade 7: mid=107, only 2 trades forward — null
+    row7 = df.filter(pl.col("mid") == 107.0)
+    assert row7["future_mid"][0] is None
+    assert row7["markout"][0] is None
+
+
+def test_trade_clock_partitioned():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import trades as trades_h
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    rows = []
+    for i in range(20):
+        sym = "AAPL" if i % 2 == 0 else "MSFT"
+        mid = 100.0 + (i // 2) if sym == "AAPL" else 200.0 - (i // 2)
+        rows.append(
+            {
+                "timestamp": base + timedelta(seconds=i),
+                "side": 1,
+                "price": mid,
+                "mid": mid,
+                "symbol": sym,
+            }
+        )
+
+    t = pl.DataFrame(rows).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=t, quotes=None, horizons=trades_h(2), by="symbol")
+    df = result.to_polars()
+
+    # AAPL trades should only see AAPL future mids (going up)
+    aapl = df.filter(pl.col("symbol") == "AAPL").filter(pl.col("markout").is_not_null())
+    assert all(m > 0 for m in aapl["markout"].to_list())
+
+    # MSFT trades should only see MSFT future mids (going down)
+    msft = df.filter(pl.col("symbol") == "MSFT").filter(pl.col("markout").is_not_null())
+    assert all(m < 0 for m in msft["markout"].to_list())

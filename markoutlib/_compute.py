@@ -157,6 +157,65 @@ def _compute_wall_clock(
     return joined
 
 
+def _compute_trade_clock(
+    trades: pl.DataFrame,
+    horizon: Horizon,
+    unit: Unit,
+    by_cols: list[str] | None,
+) -> pl.DataFrame:
+    """Compute markout for a single trade-clock horizon.
+
+    Args:
+        trades: DataFrame of trade records with required columns.
+        horizon: Horizon specifying how many trades forward to measure.
+        unit: Output unit, either BPS or PRICE.
+        by_cols: Optional partition columns; shift is applied within each group.
+
+    Returns:
+        trades DataFrame with future_mid, markout, horizon_type, and
+        horizon_value columns added.
+    """
+    n = int(horizon.value)
+
+    if by_cols:
+        result = trades.with_columns(
+            pl.col("mid").shift(-n).over(by_cols).alias("future_mid")
+        )
+    else:
+        result = trades.with_columns(
+            pl.col("mid").shift(-n).alias("future_mid")
+        )
+
+    null_mid = pl.col("mid").is_null() | (pl.col("mid") == 0)
+
+    if unit == Unit.BPS:
+        markout_expr = (
+            pl.when(null_mid | pl.col("future_mid").is_null())
+            .then(pl.lit(None, dtype=pl.Float64))
+            .otherwise(
+                pl.col("side").cast(pl.Float64)
+                * (pl.col("future_mid") - pl.col("mid"))
+                / pl.col("mid")
+                * 10_000
+            )
+        )
+    else:
+        markout_expr = (
+            pl.when(null_mid | pl.col("future_mid").is_null())
+            .then(pl.lit(None, dtype=pl.Float64))
+            .otherwise(
+                pl.col("side").cast(pl.Float64)
+                * (pl.col("future_mid") - pl.col("mid"))
+            )
+        )
+
+    return result.with_columns(
+        markout_expr.alias("markout"),
+        pl.lit(horizon.type.value).alias("horizon_type"),
+        pl.lit(horizon.value).alias("horizon_value"),
+    )
+
+
 def compute(
     trades: pl.DataFrame,
     quotes: pl.DataFrame | None = None,
@@ -202,6 +261,9 @@ def compute(
         if horizon.type == HorizonType.WALL:
             assert quotes is not None  # guaranteed by validation
             chunk = _compute_wall_clock(trades, quotes, horizon, parsed_unit, by_cols)
+            results.append(chunk)
+        elif horizon.type == HorizonType.TRADE:
+            chunk = _compute_trade_clock(trades, horizon, parsed_unit, by_cols)
             results.append(chunk)
         else:
             msg = f"{horizon.type.value}-clock horizons not yet implemented"
