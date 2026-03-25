@@ -140,11 +140,27 @@ class MarkoutResult:
         if by is not None:
             return self._half_life_by(by)
 
-        horizon_types = self._data["horizon_type"].unique()
-        if len(horizon_types) > 1:
+        # Filter to positive horizons only
+        positive = self._data.filter(pl.col("horizon_value") > 0)
+        if positive.height < self._data.height:
+            has_negative = self._data.filter(pl.col("horizon_value") < 0).height > 0
+            if has_negative:
+                import warnings
+                warnings.warn(
+                    "Negative horizons excluded from decay fit — "
+                    "half_life() operates on post-trade horizons only",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+        horizon_types = positive["horizon_type"].unique()
+        if len(horizon_types) != 1:
             return _NO_FIT
 
-        agg = self._data.group_by("horizon_value", maintain_order=True).agg(
+        if positive.height == 0:
+            return _NO_FIT
+
+        agg = positive.group_by("horizon_value", maintain_order=True).agg(
             pl.col("markout").mean()
         )
         horizons = agg["horizon_value"].to_numpy().astype(float)

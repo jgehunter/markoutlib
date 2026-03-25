@@ -216,3 +216,28 @@ def test_spread_decomposition_horizon_not_found(simple_result):
 
     with pytest.raises(ValueError, match="horizon.*not found"):
         simple_result.spread_decomposition(horizon=seconds(999))
+
+
+def test_half_life_filters_negative_horizons():
+    import warnings
+
+    rows = []
+    for h in [-10.0, -5.0, 0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0]:
+        for i in range(50):
+            m = 2.0 * (1 - np.exp(-h / 10.0)) if h > 0 else h * 0.01
+            rows.append({
+                "timestamp": datetime(2024, 1, 15, 10, 0, 0) + timedelta(seconds=i),
+                "side": 1, "price": 100.0, "mid": 100.0,
+                "horizon_type": "wall", "horizon_value": h,
+                "future_mid": 100.0, "markout": m,
+            })
+
+    data = pl.DataFrame(rows).cast({"timestamp": pl.Datetime("us")})
+    result = MarkoutResult(data, "bps")
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        hl = result.half_life()
+        assert any("Negative horizons excluded" in str(x.message) for x in w)
+
+    assert hl.converged

@@ -172,7 +172,9 @@ def plot_curve(result: MarkoutResult, *, by: str | None = None) -> go.Figure:
         # Plotly names axes xaxis, xaxis2, xaxis3, … for cols 1, 2, 3, …
         axis_key = "xaxis" if col_idx == 0 else f"xaxis{col_idx + 1}"
         if htype in _LOG_SCALE_TYPES:
-            fig.update_layout(**{axis_key: dict(type="log")})
+            min_val = sub_df["horizon_value"].min()
+            if min_val is not None and min_val > 0:
+                fig.update_layout(**{axis_key: dict(type="log")})
 
     apply_style(fig, "Markout Curve")
     return fig
