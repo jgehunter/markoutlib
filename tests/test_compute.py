@@ -271,3 +271,71 @@ def test_tick_clock_partitioned():
 
     assert aapl["future_mid"][0] == 101.0
     assert msft["future_mid"][0] == 199.0
+
+
+def test_wall_clock_zero():
+    from markoutlib._compute import compute
+
+    trades_df, quotes = _make_known_answer_data()
+    result = compute(trades=trades_df, quotes=quotes, horizons=seconds(0))
+    df = result.to_polars()
+
+    non_null = df.filter(pl.col("markout").is_not_null())
+    assert non_null.height > 0
+    # Markout at horizon 0 should be ~0
+    assert abs(non_null["markout"].mean()) < 0.01
+
+
+def test_wall_clock_negative():
+    from markoutlib._compute import compute
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(seconds=30)],
+            "side": [1],
+            "price": [100.0],
+            "mid": [100.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    quotes = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(seconds=i) for i in range(61)],
+            "mid": [99.0 + 0.001 * i for i in range(61)],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    # seconds(-10): target = t+30 - 10 = t+20, quote mid at t+20 = 99.020
+    result = compute(trades=trades_df, quotes=quotes, horizons=seconds(-10))
+    df = result.to_polars()
+
+    assert df["future_mid"][0] is not None
+    assert abs(df["future_mid"][0] - 99.020) < 0.01
+
+
+def test_wall_clock_negative_null_when_no_earlier_quotes():
+    from markoutlib._compute import compute
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base],
+            "side": [1],
+            "price": [100.0],
+            "mid": [100.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    quotes = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(seconds=5)],
+            "mid": [100.5],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=trades_df, quotes=quotes, horizons=seconds(-10))
+    df = result.to_polars()
+
+    assert df["future_mid"][0] is None
+    assert df["markout"][0] is None

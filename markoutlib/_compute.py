@@ -104,7 +104,8 @@ def _compute_wall_clock(
 
     # Tolerance filter: if matched quote is more than 2x the horizon away
     # from target, null out future_mid (stale quote protection)
-    tolerance_td = timedelta(seconds=2 * horizon_seconds)
+    tolerance_seconds = 2 * abs(horizon_seconds) if horizon_seconds != 0 else 60
+    tolerance_td = timedelta(seconds=tolerance_seconds)
     joined = joined.with_columns(
         pl.when(
             (pl.col("timestamp_right").is_null())
