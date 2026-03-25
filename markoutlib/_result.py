@@ -9,6 +9,7 @@ import polars as pl
 from scipy.stats import kurtosis as scipy_kurtosis
 from scipy.stats import skew as scipy_skew
 
+from markoutlib._horizons import Horizon, HorizonSet
 from markoutlib._stats import (
     _NO_FIT,
     DecayFitResult,
@@ -322,6 +323,294 @@ class MarkoutResult:
             rows.append(row)
 
         return pl.DataFrame(rows)
+
+    # ------------------------------------------------------------------
+    # spread decomposition helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_horizon(horizon: Horizon | HorizonSet) -> tuple[str, float]:
+        """Convert a Horizon or single-element HorizonSet to (type_str, value).
+
+        Args:
+            horizon: A Horizon or a single-element HorizonSet.
+
+        Returns:
+            Tuple of (horizon type string, horizon value).
+
+        Raises:
+            ValueError: If a HorizonSet has more than one element.
+        """
+        if isinstance(horizon, HorizonSet):
+            horizon = horizon.single()
+        return horizon.type.value, float(horizon.value)
+
+    def _validate_horizon_exists(self, h_type: str, h_value: float) -> None:
+        """Check that the given horizon exists in the result data.
+
+        Args:
+            h_type: Horizon type string (e.g. 'wall').
+            h_value: Horizon value (e.g. 5.0).
+
+        Raises:
+            ValueError: If the horizon is not present, listing available ones.
+        """
+        mask = (self._data["horizon_type"] == h_type) & (
+            self._data["horizon_value"] == h_value
+        )
+        if mask.sum() > 0:
+            return
+        available: dict[str, list[float]] = {}
+        for row in (
+            self._data.select("horizon_type", "horizon_value")
+            .unique()
+            .sort("horizon_type", "horizon_value")
+            .iter_rows()
+        ):
+            available.setdefault(row[0], []).append(row[1])
+        parts = [f"{k}={v}" for k, v in sorted(available.items())]
+        msg = (
+            f"horizon {h_type}({h_value}) not found in result. "
+            f"Available: {', '.join(parts)}"
+        )
+        raise ValueError(msg)
+
+    # ------------------------------------------------------------------
+    # effective_spread
+    # ------------------------------------------------------------------
+
+    def effective_spread(self, *, by: str | None = None) -> pl.DataFrame:
+        """Compute effective spread: side * (price - mid) in bps or price.
+
+        Horizon-independent; deduplicates rows across horizons before computing.
+
+        Args:
+            by: Optional column to group by.
+
+        Returns:
+            DataFrame with effective_spread_mean, effective_spread_median, n_obs.
+        """
+        drop_cols = [
+            c
+            for c in ("horizon_type", "horizon_value", "markout", "future_mid")
+            if c in self._data.columns
+        ]
+        unique_trades = self._data.drop(drop_cols).unique()
+
+        if self._unit == "bps":
+            spread_expr = (
+                pl.col("side")
+                * (pl.col("price") - pl.col("mid"))
+                / pl.col("mid")
+                * 10_000
+            )
+        else:
+            spread_expr = pl.col("side") * (
+                pl.col("price") - pl.col("mid")
+            )
+
+        trades_with_spread = unique_trades.with_columns(
+            spread_expr.alias("_eff_spread")
+        )
+
+        group_cols = [by] if by is not None else []
+        if group_cols:
+            grouped = trades_with_spread.group_by(group_cols, maintain_order=True)
+        else:
+            grouped = trades_with_spread.group_by(pl.lit(True), maintain_order=True)
+
+        result = grouped.agg(
+            pl.col("_eff_spread").mean().alias("effective_spread_mean"),
+            pl.col("_eff_spread").median().alias("effective_spread_median"),
+            pl.col("_eff_spread").count().alias("n_obs"),
+        )
+
+        if not group_cols:
+            result = result.drop("literal")
+
+        return result
+
+    # ------------------------------------------------------------------
+    # realized_spread
+    # ------------------------------------------------------------------
+
+    def realized_spread(
+        self, *, horizon: Horizon | HorizonSet, by: str | None = None
+    ) -> pl.DataFrame:
+        """Compute realized spread: side * (price - future_mid) / mid * 10_000 (bps).
+
+        Args:
+            horizon: The horizon to compute realized spread at.
+            by: Optional column to group by.
+
+        Returns:
+            DataFrame with horizon_type, horizon_value, realized_spread_mean,
+            realized_spread_median, n_obs.
+        """
+        h_type, h_value = self._resolve_horizon(horizon)
+        self._validate_horizon_exists(h_type, h_value)
+
+        filtered = self._data.filter(
+            (pl.col("horizon_type") == h_type)
+            & (pl.col("horizon_value") == h_value)
+        )
+
+        if self._unit == "bps":
+            spread_expr = (
+                pl.col("side")
+                * (pl.col("price") - pl.col("future_mid"))
+                / pl.col("mid")
+                * 10_000
+            )
+        else:
+            spread_expr = pl.col("side") * (pl.col("price") - pl.col("future_mid"))
+
+        filtered = filtered.with_columns(spread_expr.alias("_real_spread"))
+
+        group_cols = [by] if by is not None else []
+        if group_cols:
+            grouped = filtered.group_by(group_cols, maintain_order=True)
+        else:
+            grouped = filtered.group_by(pl.lit(True), maintain_order=True)
+
+        result = grouped.agg(
+            pl.col("_real_spread").mean().alias("realized_spread_mean"),
+            pl.col("_real_spread").median().alias("realized_spread_median"),
+            pl.col("_real_spread").count().alias("n_obs"),
+        )
+
+        if not group_cols:
+            result = result.drop("literal")
+
+        result = result.with_columns(
+            pl.lit(h_type).alias("horizon_type"),
+            pl.lit(h_value).alias("horizon_value"),
+        )
+
+        # Reorder so horizon cols come first.
+        cols = ["horizon_type", "horizon_value"] + [
+            c for c in result.columns if c not in ("horizon_type", "horizon_value")
+        ]
+        return result.select(cols)
+
+    # ------------------------------------------------------------------
+    # price_impact
+    # ------------------------------------------------------------------
+
+    def price_impact(
+        self, *, horizon: Horizon | HorizonSet, by: str | None = None
+    ) -> pl.DataFrame:
+        """Compute price impact: side * (future_mid - mid) / mid * 10_000 (bps).
+
+        Args:
+            horizon: The horizon to compute price impact at.
+            by: Optional column to group by.
+
+        Returns:
+            DataFrame with horizon_type, horizon_value, price_impact_mean,
+            price_impact_median, n_obs.
+        """
+        h_type, h_value = self._resolve_horizon(horizon)
+        self._validate_horizon_exists(h_type, h_value)
+
+        filtered = self._data.filter(
+            (pl.col("horizon_type") == h_type)
+            & (pl.col("horizon_value") == h_value)
+        )
+
+        if self._unit == "bps":
+            impact_expr = (
+                pl.col("side")
+                * (pl.col("future_mid") - pl.col("mid"))
+                / pl.col("mid")
+                * 10_000
+            )
+        else:
+            impact_expr = pl.col("side") * (pl.col("future_mid") - pl.col("mid"))
+
+        filtered = filtered.with_columns(impact_expr.alias("_price_impact"))
+
+        group_cols = [by] if by is not None else []
+        if group_cols:
+            grouped = filtered.group_by(group_cols, maintain_order=True)
+        else:
+            grouped = filtered.group_by(pl.lit(True), maintain_order=True)
+
+        result = grouped.agg(
+            pl.col("_price_impact").mean().alias("price_impact_mean"),
+            pl.col("_price_impact").median().alias("price_impact_median"),
+            pl.col("_price_impact").count().alias("n_obs"),
+        )
+
+        if not group_cols:
+            result = result.drop("literal")
+
+        result = result.with_columns(
+            pl.lit(h_type).alias("horizon_type"),
+            pl.lit(h_value).alias("horizon_value"),
+        )
+
+        cols = ["horizon_type", "horizon_value"] + [
+            c for c in result.columns if c not in ("horizon_type", "horizon_value")
+        ]
+        return result.select(cols)
+
+    # ------------------------------------------------------------------
+    # spread_decomposition
+    # ------------------------------------------------------------------
+
+    def spread_decomposition(
+        self, *, horizon: Horizon | HorizonSet, by: str | None = None
+    ) -> pl.DataFrame:
+        """Decompose effective spread into realized spread + price impact.
+
+        Identity: effective_spread = realized_spread + price_impact (exact).
+
+        Args:
+            horizon: The horizon for realized spread and price impact.
+            by: Optional column to group by.
+
+        Returns:
+            DataFrame with effective_spread_mean, realized_spread_mean,
+            price_impact_mean, and n_obs columns.
+        """
+        eff = self.effective_spread(by=by)
+        real = self.realized_spread(horizon=horizon, by=by)
+        imp = self.price_impact(horizon=horizon, by=by)
+
+        if by is not None:
+            join_on = [by]
+            result = eff.join(
+                real.select([by, "horizon_type", "horizon_value",
+                             "realized_spread_mean", "realized_spread_median"]),
+                on=join_on,
+            ).join(
+                imp.select([by, "price_impact_mean", "price_impact_median"]),
+                on=join_on,
+            )
+        else:
+            result = eff.with_columns(
+                real["horizon_type"],
+                real["horizon_value"],
+                real["realized_spread_mean"],
+                real["realized_spread_median"],
+                imp["price_impact_mean"],
+                imp["price_impact_median"],
+            )
+
+        cols = (
+            (["horizon_type", "horizon_value"] + ([by] if by else []))
+            + [
+                "effective_spread_mean",
+                "effective_spread_median",
+                "realized_spread_mean",
+                "realized_spread_median",
+                "price_impact_mean",
+                "price_impact_median",
+                "n_obs",
+            ]
+        )
+        return result.select([c for c in cols if c in result.columns])
 
     # ------------------------------------------------------------------
     # plot (lazy accessor, wired in Task 12)

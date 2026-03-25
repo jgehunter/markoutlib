@@ -166,3 +166,53 @@ def test_to_pandas(simple_result):
     pd = pytest.importorskip("pandas")
     pdf = simple_result.to_pandas()
     assert isinstance(pdf, pd.DataFrame)
+
+
+def test_effective_spread(simple_result):
+    df = simple_result.effective_spread()
+    assert "effective_spread_mean" in df.columns
+    assert "effective_spread_median" in df.columns
+    assert "n_obs" in df.columns
+    assert df.height == 1
+
+
+def test_effective_spread_by(simple_result):
+    df = simple_result.effective_spread(by="counterparty")
+    assert "counterparty" in df.columns
+    assert df.height == 3
+
+
+def test_realized_spread(simple_result):
+    from markoutlib._horizons import seconds
+
+    df = simple_result.realized_spread(horizon=seconds(5))
+    assert "realized_spread_mean" in df.columns
+    assert "horizon_type" in df.columns
+
+
+def test_price_impact(simple_result):
+    from markoutlib._horizons import seconds
+
+    df = simple_result.price_impact(horizon=seconds(5))
+    assert "price_impact_mean" in df.columns
+
+
+def test_spread_decomposition_identity(simple_result):
+    from markoutlib._horizons import seconds
+
+    df = simple_result.spread_decomposition(horizon=seconds(5))
+    assert "effective_spread_mean" in df.columns
+    assert "realized_spread_mean" in df.columns
+    assert "price_impact_mean" in df.columns
+    for row in df.iter_rows(named=True):
+        eff = row["effective_spread_mean"]
+        real = row["realized_spread_mean"]
+        imp = row["price_impact_mean"]
+        assert abs(eff - (real + imp)) < 1e-10
+
+
+def test_spread_decomposition_horizon_not_found(simple_result):
+    from markoutlib._horizons import seconds
+
+    with pytest.raises(ValueError, match="horizon.*not found"):
+        simple_result.spread_decomposition(horizon=seconds(999))
