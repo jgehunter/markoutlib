@@ -29,9 +29,7 @@ trades = pl.DataFrame(
             for i in range(n_trades)
         ],
         "side": [1 if rng.random() > 0.5 else -1 for _ in range(n_trades)],
-        "price": [
-            100.0 + 0.001 * i + rng.normal(0, 0.005) for i in range(n_trades)
-        ],
+        "price": [100.0 + 0.001 * i + rng.normal(0, 0.005) for i in range(n_trades)],
         "mid": [100.0 + 0.001 * i for i in range(n_trades)],
         "size": rng.lognormal(5, 1, n_trades).tolist(),
         "counterparty": [f"LP_{rng.integers(0, 4)}" for _ in range(n_trades)],
@@ -41,12 +39,9 @@ trades = pl.DataFrame(
 n_quotes = 50_000
 quotes = pl.DataFrame(
     {
-        "timestamp": [
-            base + timedelta(milliseconds=100 * i) for i in range(n_quotes)
-        ],
+        "timestamp": [base + timedelta(milliseconds=100 * i) for i in range(n_quotes)],
         "mid": [
-            100.0 + 0.001 * (i / 10) + rng.normal(0, 0.002)
-            for i in range(n_quotes)
+            100.0 + 0.001 * (i / 10) + rng.normal(0, 0.002) for i in range(n_quotes)
         ],
     }
 ).cast({"timestamp": pl.Datetime("us")})

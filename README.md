@@ -64,6 +64,19 @@ result.test("counterparty")
 # Pairwise tests with Benjamini-Hochberg correction
 result.test("counterparty", pairwise=True)
 
+# Pre-trade baselines — detect information leakage
+result = mo.compute(
+    trades=trades,
+    quotes=quotes,
+    horizons=mo.seconds_range(-30, 30, step=1),
+)
+result.plot.curve()  # Full crossing-zero curve
+
+# Spread decomposition: effective = realized + price impact
+result.spread_decomposition(horizon=mo.seconds(5))
+result.effective_spread()
+result.realized_spread(horizon=mo.seconds(5))
+
 # Visualization
 result.plot.curve()
 result.plot.curve(by="counterparty")
@@ -103,6 +116,20 @@ Formula: `side * (future_mid - mid)`, scaled to bps by default.
 - `unit="bps"` (default): `side * (future_mid - mid) / mid * 10000`
 - `unit="price"`: `side * (future_mid - mid)`
 
+### Negative offsets and pre-trade baselines
+
+Horizon values can be negative. A horizon of `-5` seconds looks up the mid 5 seconds *before* each trade, giving you a pre-trade baseline. This is the standard technique for detecting information leakage: if the markout curve is already non-zero before time zero, someone is trading on stale information or the signal is arriving before the trade timestamp suggests.
+
+Use `seconds_range(-30, 30, step=1)` to generate a full crossing-zero curve. The `half_life()` method automatically filters out negative horizons since decay fitting only makes sense on the post-trade portion.
+
+### Spread decomposition
+
+The Huang-Stoll identity decomposes the effective half-spread into realized spread and price impact:
+
+`effective_spread = realized_spread + price_impact`
+
+The effective spread measures execution cost at the moment of the trade. The realized spread measures what the liquidity provider actually earns after prices move. The price impact measures the permanent information content of the trade. When price impact dominates, the flow is informed. When realized spread dominates, the liquidity provider is profiting from transient effects.
+
 ### The mid column contract
 
 You provide the mid. The library never constructs it from bid/ask, NBBO, or any other source. This is deliberate -- mid calculation varies by instrument, venue, and use case. Bring your own.
@@ -134,6 +161,15 @@ Core computation. Returns a `MarkoutResult`. Accepts Polars or pandas DataFrames
 | `mo.trades(*values)` | Trade-clock | No |
 | `mo.ticks(*values)` | Tick-clock | Yes |
 
+Range constructors generate uniform grids with inclusive stop:
+
+```python
+mo.seconds_range(start=1, stop=60, step=5)    # 1, 6, 11, ..., 56
+mo.seconds_range(start=-30, stop=30, step=5)   # Crosses zero
+mo.trades_range(start=1, stop=100, step=10)
+mo.ticks_range(start=1, stop=50, step=5)
+```
+
 ### `MarkoutResult` methods
 
 | Method | Returns | Description |
@@ -147,8 +183,23 @@ Core computation. Returns a `MarkoutResult`. Accepts Polars or pandas DataFrames
 | `.plot.distribution(horizon=, by=)` | `Figure` | Markout distribution at a single horizon |
 | `.plot.comparison(by=)` | `Figure` | Segment comparison chart |
 | `.plot.scatter(x=, horizon=)` | `Figure` | Markout vs continuous variable |
+| `.effective_spread(by=)` | `DataFrame` | Effective half-spread per trade |
+| `.realized_spread(horizon=, by=)` | `DataFrame` | Realized half-spread at given horizon |
+| `.price_impact(horizon=, by=)` | `DataFrame` | Price impact component at given horizon |
+| `.spread_decomposition(horizon=, by=)` | `DataFrame` | Full Huang-Stoll decomposition |
 | `.to_polars()` | `DataFrame` | Raw per-trade markout data |
 | `.to_pandas()` | `pd.DataFrame` | Pandas export (requires `markoutlib[pandas]`) |
+
+## Examples
+
+See the `examples/` directory for runnable notebooks:
+
+- `01_quickstart.py` — Synthetic data API walkthrough
+- `02_crypto_markouts.py` — Binance BTCUSDT markout analysis (Tardis.dev data)
+- `03_spread_decomposition.py` — AAPL effective/realized spread (LOBSTER data)
+- `04_information_leakage.py` — Pre-trade baseline detection (LOBSTER data)
+
+Open in VS Code or JupyterLab as interactive notebooks (percent format).
 
 ## Non-goals
 
@@ -165,12 +216,12 @@ Core computation. Returns a `MarkoutResult`. Accepts Polars or pandas DataFrames
 - [ ] Configurable stale quote tolerance
 - [ ] Additional bootstrap methods (BCa, studentized)
 - [ ] LaTeX report generation
-- [ ] Markout attribution decomposition (spread vs alpha components)
+- [x] Markout attribution decomposition (spread vs alpha components)
 
 ## Installation
 
 ```bash
-pip install markoutlib
+pip install markoutlib           # v0.2
 ```
 
 With pandas support:
@@ -179,7 +230,7 @@ With pandas support:
 pip install markoutlib[pandas]
 ```
 
-Requires Python 3.11+.
+Requires Python 3.11+. Polars is the only required dependency.
 
 ## License
 

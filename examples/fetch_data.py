@@ -78,15 +78,24 @@ def fetch_lobster_sample(
         msg_path,
         has_header=False,
         new_columns=[
-            "time", "event_type", "order_id", "size", "price", "direction",
+            "time",
+            "event_type",
+            "order_id",
+            "size",
+            "price",
+            "direction",
         ],
     )
     ob_cols = []
     for i in range(1, level + 1):
-        ob_cols.extend([
-            f"ask_price_{i}", f"ask_size_{i}",
-            f"bid_price_{i}", f"bid_size_{i}",
-        ])
+        ob_cols.extend(
+            [
+                f"ask_price_{i}",
+                f"ask_size_{i}",
+                f"bid_price_{i}",
+                f"bid_size_{i}",
+            ]
+        )
     orderbook = pl.read_csv(ob_path, has_header=False, new_columns=ob_cols)
 
     return messages, orderbook
@@ -96,10 +105,7 @@ def prepare_tardis_trades(df: pl.DataFrame) -> pl.DataFrame:
     """Convert Tardis trades to markoutlib format."""
     return df.select(
         (pl.col("timestamp") * 1000).cast(pl.Datetime("us")).alias("timestamp"),
-        pl.when(pl.col("side") == "buy")
-        .then(1)
-        .otherwise(-1)
-        .alias("side"),
+        pl.when(pl.col("side") == "buy").then(1).otherwise(-1).alias("side"),
         pl.col("price").cast(pl.Float64),
         pl.col("amount").cast(pl.Float64).alias("size"),
     )
@@ -133,9 +139,7 @@ def prepare_lobster(
     combined = messages.with_columns(
         (
             pl.lit(base_date)
-            + pl.duration(
-                microseconds=(pl.col("time") * 1_000_000).cast(pl.Int64)
-            )
+            + pl.duration(microseconds=(pl.col("time") * 1_000_000).cast(pl.Int64))
         ).alias("timestamp"),
         mid.alias("mid"),
         (pl.col("price").cast(pl.Float64) / 10_000).alias("price_adj"),
