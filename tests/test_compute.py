@@ -273,6 +273,54 @@ def test_tick_clock_partitioned():
     assert msft["future_mid"][0] == 199.0
 
 
+def test_trade_clock_zero():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import trades as trades_h
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    t = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(seconds=i) for i in range(5)],
+            "side": [1] * 5,
+            "price": [100.0] * 5,
+            "mid": [100.0 + i for i in range(5)],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=t, quotes=None, horizons=trades_h(0))
+    df = result.to_polars()
+
+    for i in range(5):
+        assert df["future_mid"][i] == df["mid"][i]
+        assert abs(df["markout"][i]) < 1e-10
+
+
+def test_trade_clock_negative():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import trades as trades_h
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    t = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(seconds=i) for i in range(10)],
+            "side": [1] * 10,
+            "price": [100.0] * 10,
+            "mid": [100.0 + i for i in range(10)],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=t, quotes=None, horizons=trades_h(-3))
+    df = result.to_polars()
+
+    # Trade 5: mid=105, 3 trades back is trade 2 with mid=102
+    assert df["future_mid"][5] == 102.0
+
+    # First 3 trades: not enough prior trades
+    for i in range(3):
+        assert df["future_mid"][i] is None
+        assert df["markout"][i] is None
+
+
 def test_wall_clock_zero():
     from markoutlib._compute import compute
 
