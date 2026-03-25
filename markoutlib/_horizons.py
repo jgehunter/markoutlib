@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from markoutlib._types import HorizonType
@@ -49,10 +50,6 @@ class HorizonSet:
 
 
 def _make_horizons(type_: HorizonType, *values: int | float) -> HorizonSet:
-    for v in values:
-        if v <= 0:
-            msg = "horizon values must be positive"
-            raise ValueError(msg)
     return HorizonSet([Horizon(type=type_, value=v) for v in values])
 
 
@@ -69,3 +66,36 @@ def trades(*values: int | float) -> HorizonSet:
 def ticks(*values: int | float) -> HorizonSet:
     """Tick-clock horizons (N quote updates forward)."""
     return _make_horizons(HorizonType.TICK, *values)
+
+
+def _make_range(
+    type_: HorizonType, start: int | float, stop: int | float, step: int | float
+) -> HorizonSet:
+    if step <= 0:
+        msg = "step must be positive"
+        raise ValueError(msg)
+    if start > stop:
+        msg = "start must be <= stop"
+        raise ValueError(msg)
+    n = math.floor((stop - start) / step) + 1
+    values = [start + i * step for i in range(n)]
+    return HorizonSet([Horizon(type=type_, value=v) for v in values])
+
+
+def seconds_range(
+    start: int | float, stop: int | float, step: int | float
+) -> HorizonSet:
+    """Wall-clock horizons from start to stop (inclusive), stepping by step."""
+    return _make_range(HorizonType.WALL, start, stop, step)
+
+
+def trades_range(
+    start: int | float, stop: int | float, step: int | float
+) -> HorizonSet:
+    """Trade-clock horizons from start to stop (inclusive), stepping by step."""
+    return _make_range(HorizonType.TRADE, start, stop, step)
+
+
+def ticks_range(start: int | float, stop: int | float, step: int | float) -> HorizonSet:
+    """Tick-clock horizons from start to stop (inclusive), stepping by step."""
+    return _make_range(HorizonType.TICK, start, stop, step)
