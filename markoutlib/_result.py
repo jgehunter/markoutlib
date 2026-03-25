@@ -146,6 +146,7 @@ class MarkoutResult:
             has_negative = self._data.filter(pl.col("horizon_value") < 0).height > 0
             if has_negative:
                 import warnings
+
                 warnings.warn(
                     "Negative horizons excluded from decay fit — "
                     "half_life() operates on post-trade horizons only",
@@ -421,9 +422,7 @@ class MarkoutResult:
                 * 10_000
             )
         else:
-            spread_expr = pl.col("side") * (
-                pl.col("price") - pl.col("mid")
-            )
+            spread_expr = pl.col("side") * (pl.col("price") - pl.col("mid"))
 
         trades_with_spread = unique_trades.with_columns(
             spread_expr.alias("_eff_spread")
@@ -467,8 +466,7 @@ class MarkoutResult:
         self._validate_horizon_exists(h_type, h_value)
 
         filtered = self._data.filter(
-            (pl.col("horizon_type") == h_type)
-            & (pl.col("horizon_value") == h_value)
+            (pl.col("horizon_type") == h_type) & (pl.col("horizon_value") == h_value)
         )
 
         if self._unit == "bps":
@@ -530,8 +528,7 @@ class MarkoutResult:
         self._validate_horizon_exists(h_type, h_value)
 
         filtered = self._data.filter(
-            (pl.col("horizon_type") == h_type)
-            & (pl.col("horizon_value") == h_value)
+            (pl.col("horizon_type") == h_type) & (pl.col("horizon_value") == h_value)
         )
 
         if self._unit == "bps":
@@ -597,8 +594,15 @@ class MarkoutResult:
         if by is not None:
             join_on = [by]
             result = eff.join(
-                real.select([by, "horizon_type", "horizon_value",
-                             "realized_spread_mean", "realized_spread_median"]),
+                real.select(
+                    [
+                        by,
+                        "horizon_type",
+                        "horizon_value",
+                        "realized_spread_mean",
+                        "realized_spread_median",
+                    ]
+                ),
                 on=join_on,
             ).join(
                 imp.select([by, "price_impact_mean", "price_impact_median"]),
@@ -614,18 +618,15 @@ class MarkoutResult:
                 imp["price_impact_median"],
             )
 
-        cols = (
-            (["horizon_type", "horizon_value"] + ([by] if by else []))
-            + [
-                "effective_spread_mean",
-                "effective_spread_median",
-                "realized_spread_mean",
-                "realized_spread_median",
-                "price_impact_mean",
-                "price_impact_median",
-                "n_obs",
-            ]
-        )
+        cols = (["horizon_type", "horizon_value"] + ([by] if by else [])) + [
+            "effective_spread_mean",
+            "effective_spread_median",
+            "realized_spread_mean",
+            "realized_spread_median",
+            "price_impact_mean",
+            "price_impact_median",
+            "n_obs",
+        ]
         return result.select([c for c in cols if c in result.columns])
 
     # ------------------------------------------------------------------
