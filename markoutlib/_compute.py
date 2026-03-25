@@ -226,24 +226,37 @@ def _tick_clock_partition(
 ) -> list[float | None]:
     """Compute tick-clock future mids for one partition.
 
-    Args:
-        trade_timestamps: Sorted trade timestamps as integer microseconds.
-        quote_timestamps: Sorted quote timestamps as integer microseconds.
-        quote_mids: Quote mid prices aligned with quote_timestamps.
-        n: Number of ticks (quote updates) forward.
-
-    Returns:
-        List of future mid values, None where insufficient ticks exist.
+    For n > 0: the n-th quote strictly after each trade.
+    For n == 0: the last quote at or before each trade.
+    For n < 0: the |n|-th quote before the last-at-or-before, counting backward.
     """
     result: list[float | None] = []
     num_quotes = len(quote_timestamps)
     for ts in trade_timestamps:
+        # idx = first quote strictly after the trade
         idx = bisect.bisect_right(quote_timestamps, ts)
-        target = idx + n - 1
-        if target < num_quotes:
-            result.append(quote_mids[target])
+
+        if n > 0:
+            target = idx + n - 1
+            if 0 <= target < num_quotes:
+                result.append(quote_mids[target])
+            else:
+                result.append(None)
+        elif n == 0:
+            # Last quote at or before trade
+            target = idx - 1
+            if target >= 0:
+                result.append(quote_mids[target])
+            else:
+                result.append(None)
         else:
-            result.append(None)
+            # Negative: count backward from last-at-or-before
+            last_before = idx - 1
+            target = last_before + n  # n is negative, so this subtracts
+            if target >= 0:
+                result.append(quote_mids[target])
+            else:
+                result.append(None)
     return result
 
 

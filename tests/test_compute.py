@@ -387,3 +387,122 @@ def test_wall_clock_negative_null_when_no_earlier_quotes():
 
     assert df["future_mid"][0] is None
     assert df["markout"][0] is None
+
+
+def test_tick_clock_zero():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import ticks
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(milliseconds=150)],
+            "side": [1],
+            "price": [100.0],
+            "mid": [100.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    quotes_df = pl.DataFrame(
+        {
+            "timestamp": [
+                base,
+                base + timedelta(milliseconds=100),
+                base + timedelta(milliseconds=200),
+            ],
+            "mid": [99.0, 99.5, 100.5],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(0))
+    df = result.to_polars()
+
+    # Last quote at or before t+150ms is at t+100ms (mid=99.5)
+    assert df["future_mid"][0] == 99.5
+
+
+def test_tick_clock_zero_no_prior_quotes():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import ticks
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base],
+            "side": [1],
+            "price": [100.0],
+            "mid": [100.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    quotes_df = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(seconds=1)],
+            "mid": [100.5],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(0))
+    df = result.to_polars()
+    assert df["future_mid"][0] is None
+
+
+def test_tick_clock_negative():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import ticks
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(milliseconds=500)],
+            "side": [1],
+            "price": [100.0],
+            "mid": [100.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    quotes_df = pl.DataFrame(
+        {
+            "timestamp": [
+                base,
+                base + timedelta(milliseconds=100),
+                base + timedelta(milliseconds=200),
+                base + timedelta(milliseconds=300),
+                base + timedelta(milliseconds=400),
+                base + timedelta(milliseconds=600),
+            ],
+            "mid": [90.0, 91.0, 92.0, 93.0, 94.0, 95.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(-2))
+    df = result.to_polars()
+
+    # bisect_right gives idx=5, last_before=4, target=4+(-2)=2, mid=92.0
+    assert df["future_mid"][0] == 92.0
+
+
+def test_tick_clock_negative_insufficient():
+    from markoutlib._compute import compute
+    from markoutlib._horizons import ticks
+
+    base = datetime(2024, 1, 15, 10, 0, 0)
+    trades_df = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(milliseconds=150)],
+            "side": [1],
+            "price": [100.0],
+            "mid": [100.0],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    quotes_df = pl.DataFrame(
+        {
+            "timestamp": [base + timedelta(milliseconds=100)],
+            "mid": [99.5],
+        }
+    ).cast({"timestamp": pl.Datetime("us")})
+
+    result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(-5))
+    df = result.to_polars()
+    assert df["future_mid"][0] is None
