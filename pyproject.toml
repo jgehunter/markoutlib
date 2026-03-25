@@ -31,6 +31,8 @@ dev = [
     "ruff>=0.4",
     "pandas>=2.0",
     "pyarrow>=14.0",
+    "jupyter",
+    "requests",
 ]
 
 [tool.ruff]
