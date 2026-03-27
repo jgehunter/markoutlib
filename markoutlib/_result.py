@@ -325,17 +325,21 @@ class MarkoutResult:
 
         rows: list[dict] = []
         for keys, group_df in self._data.group_by(_GROUP_KEYS, maintain_order=True):
-            markouts = group_df["markout"].drop_nulls().to_numpy()
-            weights = group_df[weight].drop_nulls().to_numpy()
-            n_obs = len(markouts)
+            valid = group_df.filter(
+                pl.col("markout").is_not_null() & pl.col(weight).is_not_null()
+            )
+            n_obs = len(valid)
             if n_obs == 0:
                 continue
+
+            markouts = valid["markout"].to_numpy()
+            w = valid[weight].to_numpy()
 
             row: dict = {}
             for col, val in zip(_GROUP_KEYS, keys, strict=True):
                 row[col] = val
             row["markout_unweighted"] = float(np.mean(markouts))
-            row["markout_weighted"] = weighted_mean(markouts, weights)
+            row["markout_weighted"] = weighted_mean(markouts, w)
             row["n_obs"] = n_obs
             rows.append(row)
 
