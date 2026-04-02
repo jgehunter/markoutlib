@@ -88,6 +88,94 @@ def _andrews_bandwidth(demeaned: NDArray[np.floating], n: int) -> int:
     return min(int(bandwidth), n - 1)
 
 
+def _bootstrap_means_prefixsum(
+    cumsum_d: NDArray[np.floating],
+    cumsum_w: NDArray[np.floating] | None,
+    cumsum_dw: NDArray[np.floating] | None,
+    n: int,
+    n_bootstrap: int,
+    p_geom: float,
+    rng: np.random.Generator,
+) -> NDArray[np.floating]:
+    """Compute bootstrap resample means using prefix sums.
+
+    Generates all blocks for all resamples at once, assigns them to
+    resamples via cumulative sizes, and vectorises the prefix-sum
+    lookups. Falls back to a scalar loop only for the per-resample
+    last-block cap.
+    """
+    # Over-allocate blocks for all resamples.
+    avg_blocks = n * p_geom  # blocks per resample
+    total_est = int(avg_blocks * n_bootstrap * 1.4) + n_bootstrap * 5
+    all_starts = rng.integers(0, n, size=total_est)
+    all_sizes = rng.geometric(p_geom, size=total_est).astype(np.int64)
+
+    # Find resample boundaries in the flat block array.
+    flat_cumsum = np.cumsum(all_sizes)
+    thresholds = np.arange(1, n_bootstrap + 1, dtype=np.int64) * n
+    boundaries = np.searchsorted(flat_cumsum, thresholds, side="left")
+
+    # Ensure we generated enough blocks.
+    while boundaries[-1] >= total_est:
+        extra = total_est
+        all_starts = np.concatenate([all_starts, rng.integers(0, n, size=extra)])
+        all_sizes = np.concatenate(
+            [all_sizes, rng.geometric(p_geom, size=extra).astype(np.int64)]
+        )
+        total_est += extra
+        flat_cumsum = np.cumsum(all_sizes)
+        boundaries = np.searchsorted(flat_cumsum, thresholds, side="left")
+
+    # Cap the last block of each resample so total == n exactly.
+    max_blk = int(boundaries[-1])
+    sizes_capped = all_sizes[: max_blk + 1].copy()
+    last_blocks = boundaries.astype(np.intp)
+    used_before = flat_cumsum[last_blocks] - all_sizes[last_blocks]
+    resample_start_totals = np.arange(n_bootstrap, dtype=np.int64) * n
+    sizes_capped[last_blocks] = n - (used_before - resample_start_totals)
+
+    starts = all_starts[: max_blk + 1]
+    ends = starts + sizes_capped  # may exceed n (circular wrap)
+
+    # Vectorised prefix-sum lookups for all blocks.
+    no_wrap = ends <= n
+    block_sums = np.empty(len(starts))
+    # Non-wrapping blocks
+    if np.any(no_wrap):
+        block_sums[no_wrap] = cumsum_d[ends[no_wrap]] - cumsum_d[starts[no_wrap]]
+    # Wrapping blocks
+    wrap = ~no_wrap
+    if np.any(wrap):
+        wrap_ends = ends[wrap] - n
+        block_sums[wrap] = (cumsum_d[n] - cumsum_d[starts[wrap]]) + cumsum_d[wrap_ends]
+
+    # Sum block sums per resample using reduceat.
+    resample_starts = np.empty(n_bootstrap, dtype=np.intp)
+    resample_starts[0] = 0
+    resample_starts[1:] = boundaries[:-1] + 1
+    means = np.add.reduceat(block_sums, resample_starts) / n
+
+    if cumsum_w is not None and cumsum_dw is not None:
+        # Weighted means: repeat for data*weights and weights.
+        bsums_dw = np.empty(len(starts))
+        bsums_dw[no_wrap] = cumsum_dw[ends[no_wrap]] - cumsum_dw[starts[no_wrap]]
+        if np.any(wrap):
+            bsums_dw[wrap] = (cumsum_dw[n] - cumsum_dw[starts[wrap]]) + cumsum_dw[
+                ends[wrap] - n
+            ]
+        bsums_w = np.empty(len(starts))
+        bsums_w[no_wrap] = cumsum_w[ends[no_wrap]] - cumsum_w[starts[no_wrap]]
+        if np.any(wrap):
+            bsums_w[wrap] = (cumsum_w[n] - cumsum_w[starts[wrap]]) + cumsum_w[
+                ends[wrap] - n
+            ]
+        total_dw = np.add.reduceat(bsums_dw, resample_starts)
+        total_w = np.add.reduceat(bsums_w, resample_starts)
+        means = np.where(total_w > 0, total_dw / total_w, 0.0)
+
+    return means
+
+
 def block_bootstrap_ci(
     data: NDArray[np.floating],
     n_bootstrap: int = 1000,
@@ -98,7 +186,8 @@ def block_bootstrap_ci(
     """Stationary block bootstrap confidence interval for the mean.
 
     Uses geometric block lengths (Politis-Romano stationary bootstrap)
-    with circular wrapping.
+    with circular wrapping. Computes block sums via prefix sums to
+    avoid materializing full index arrays.
 
     Args:
         data: 1-D array of observations.
@@ -118,45 +207,34 @@ def block_bootstrap_ci(
     block_len = max(int(round(n ** (1.0 / 3.0))), 1)
     p_geom = 1.0 / block_len
 
-    means = np.empty(n_bootstrap)
-    for b in range(n_bootstrap):
-        indices = _stationary_bootstrap_indices(n, p_geom, rng)
-        if weights is not None:
-            means[b] = weighted_mean(data[indices], weights[indices])
-        else:
-            means[b] = float(np.mean(data[indices]))
+    # Prefix sums for O(1) block-sum lookups (avoids 860K-element fancy indexing).
+    cumsum_d = np.empty(n + 1)
+    cumsum_d[0] = 0.0
+    np.cumsum(data, out=cumsum_d[1:])
+
+    if weights is not None:
+        dw = data * weights
+        cumsum_dw = np.empty(n + 1)
+        cumsum_dw[0] = 0.0
+        np.cumsum(dw, out=cumsum_dw[1:])
+        cumsum_w = np.empty(n + 1)
+        cumsum_w[0] = 0.0
+        np.cumsum(weights, out=cumsum_w[1:])
+
+    means = _bootstrap_means_prefixsum(
+        cumsum_d,
+        cumsum_w if weights is not None else None,
+        cumsum_dw if weights is not None else None,
+        n,
+        n_bootstrap,
+        p_geom,
+        rng,
+    )
 
     alpha = 1.0 - ci_level
     lower = float(np.percentile(means, 100.0 * alpha / 2.0))
     upper = float(np.percentile(means, 100.0 * (1.0 - alpha / 2.0)))
     return lower, upper
-
-
-def _stationary_bootstrap_indices(
-    n: int, p_geom: float, rng: np.random.Generator
-) -> NDArray[np.intp]:
-    """Generate stationary bootstrap indices with circular wrapping.
-
-    Args:
-        n: Sample size.
-        p_geom: Probability parameter for geometric block lengths.
-        rng: NumPy random generator.
-
-    Returns:
-        Array of n resampled indices.
-    """
-    indices = np.empty(n, dtype=np.intp)
-    i = 0
-    while i < n:
-        # Start a new block at a random position.
-        start = rng.integers(0, n)
-        # Geometric block length.
-        block_size = rng.geometric(p_geom)
-        end = min(i + block_size, n)
-        for j in range(i, end):
-            indices[j] = (start + (j - i)) % n  # Circular wrap.
-        i = end
-    return indices
 
 
 def permutation_test(
@@ -178,15 +256,18 @@ def permutation_test(
     """
     rng = np.random.default_rng(seed)
     n_seg = len(segment)
+    n_total = len(segment) + len(complement)
     combined = np.concatenate([segment, complement])
     observed_diff = float(np.mean(segment) - np.mean(complement))
 
-    count = 0
-    for _ in range(n_permutations):
-        rng.shuffle(combined)
-        perm_diff = float(np.mean(combined[:n_seg]) - np.mean(combined[n_seg:]))
-        if abs(perm_diff) >= abs(observed_diff):
-            count += 1
+    # Vectorised: generate all permutation indices at once.
+    base = np.tile(np.arange(n_total), (n_permutations, 1))
+    perm_indices = rng.permuted(base, axis=1)
+    permuted = combined[perm_indices]  # (n_permutations, n_total)
+    seg_means = permuted[:, :n_seg].mean(axis=1)
+    comp_means = permuted[:, n_seg:].mean(axis=1)
+    perm_diffs = seg_means - comp_means
+    count = int(np.sum(np.abs(perm_diffs) >= abs(observed_diff)))
 
     # Continuity correction.
     p_value = (count + 1) / (n_permutations + 1)

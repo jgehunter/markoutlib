@@ -25,16 +25,29 @@ def plot_heatmap(result: MarkoutResult, *, by: str) -> go.Figure:
     """
     curve_df = result.curve(by=by, n_bootstrap=100)
 
-    # Pivot: rows = segment, columns = horizon_value, values = markout_mean
+    # Build a unique horizon label that distinguishes types (e.g. "10s" vs "10t")
+    _suffix = {"wall": "s", "trade": "t", "tick": "q"}
+    curve_df = curve_df.with_columns(
+        (
+            curve_df["horizon_value"].cast(str)
+            + curve_df["horizon_type"].replace_strict(_suffix, default="")
+        ).alias("_hlabel")
+    )
+
+    # Pivot: rows = segment, columns = horizon label, values = markout_mean
     pivot = (
-        curve_df.select([by, "horizon_value", "markout_mean"])
-        .pivot(on="horizon_value", index=by, values="markout_mean")
+        curve_df.select([by, "_hlabel", "markout_mean"])
+        .pivot(on="_hlabel", index=by, values="markout_mean")
         .sort(by)
     )
 
     segments = pivot[by].to_list()
-    horizon_cols = [c for c in pivot.columns if c != by]
-    horizon_labels = [float(c) for c in horizon_cols]
+    # Preserve the original horizon ordering from curve_df
+    ordered_labels = (
+        curve_df.select("_hlabel").unique(maintain_order=True).to_series().to_list()
+    )
+    horizon_cols = [c for c in ordered_labels if c in pivot.columns]
+    horizon_labels = horizon_cols
 
     z = pivot.select(horizon_cols).to_numpy().astype(float)
 

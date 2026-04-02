@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 import polars as pl
+import pytest
 
 from markoutlib._horizons import seconds
 
@@ -506,3 +507,88 @@ def test_tick_clock_negative_insufficient():
     result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(-5))
     df = result.to_polars()
     assert df["future_mid"][0] is None
+
+
+def test_perspective_maker_negates_markout():
+    from markoutlib._compute import compute
+
+    trades, quotes = _make_known_answer_data()
+    taker = compute(trades=trades, quotes=quotes, horizons=seconds(5))
+    maker = compute(
+        trades=trades, quotes=quotes, horizons=seconds(5), perspective="maker"
+    )
+
+    taker_df = taker.to_polars()
+    maker_df = maker.to_polars()
+
+    # All markouts should be negated
+    t_marks = taker_df["markout"].drop_nulls().to_list()
+    m_marks = maker_df["markout"].drop_nulls().to_list()
+    assert len(t_marks) == len(m_marks)
+    for t, m in zip(t_marks, m_marks, strict=True):
+        assert abs(t + m) < 1e-10, f"expected negation: taker={t}, maker={m}"
+
+
+def test_perspective_maker_preserves_future_mid():
+    from markoutlib._compute import compute
+
+    trades, quotes = _make_known_answer_data()
+    taker = compute(trades=trades, quotes=quotes, horizons=seconds(5))
+    maker = compute(
+        trades=trades, quotes=quotes, horizons=seconds(5), perspective="maker"
+    )
+
+    # future_mid should be identical — only markout sign changes
+    assert (
+        taker.to_polars()["future_mid"].to_list()
+        == maker.to_polars()["future_mid"].to_list()
+    )
+
+
+def test_perspective_invalid_raises():
+    from markoutlib._compute import compute
+
+    trades, quotes = _make_known_answer_data()
+    with pytest.raises(ValueError, match="perspective"):
+        compute(
+            trades=trades, quotes=quotes, horizons=seconds(5), perspective="neutral"
+        )
+
+
+def test_tick_clock_native_matches_numpy():
+    """When the Rust extension is available, verify it matches numpy."""
+    import numpy as np
+
+    from markoutlib._compute import (
+        _USE_NATIVE,
+        _tick_clock_partition_np,
+    )
+
+    if not _USE_NATIVE:
+        pytest.skip("Rust extension not installed")
+
+    from _markoutlib_native import tick_clock_partition as rs_fn
+
+    rng = np.random.default_rng(42)
+    n_trades = 10_000
+    n_quotes = 50_000
+
+    trade_ts = np.sort(rng.integers(0, 1_000_000, size=n_trades)).astype(np.int64)
+    quote_ts = np.sort(rng.integers(0, 1_000_000, size=n_quotes)).astype(np.int64)
+    quote_mids = rng.uniform(99.0, 101.0, size=n_quotes)
+
+    for n in [-5, -1, 0, 1, 5, 50]:
+        np_result = _tick_clock_partition_np(trade_ts, quote_ts, quote_mids, n)
+        rs_result = np.asarray(rs_fn(trade_ts, quote_ts, quote_mids, n))
+
+        # Both should be NaN in the same positions
+        np_nan = np.isnan(np_result)
+        rs_nan = np.isnan(rs_result)
+        assert np.array_equal(np_nan, rs_nan), f"NaN mismatch at n={n}"
+
+        # Non-NaN values should be identical
+        valid = ~np_nan
+        assert np.allclose(
+            np_result[valid],
+            rs_result[valid],
+        ), f"Value mismatch at n={n}"
