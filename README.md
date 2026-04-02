@@ -111,6 +111,14 @@ Positive markout = price moved in the direction of the analyzed party's trade.
 
 Formula: `side * (future_mid - mid)`, scaled to bps by default.
 
+### Perspective
+
+By default, markouts are from the **taker's** perspective. Pass `perspective="maker"` to flip the sign so that positive markout means the liquidity provider profited:
+
+```python
+result = mo.compute(trades, quotes, horizons=mo.seconds(5), perspective="maker")
+```
+
 ### Units
 
 - `unit="bps"` (default): `side * (future_mid - mid) / mid * 10000`
@@ -152,6 +160,7 @@ Core computation. Returns a `MarkoutResult`. Accepts Polars or pandas DataFrames
 | `horizons` | `HorizonSet` | Built via `mo.seconds()`, `mo.trades()`, `mo.ticks()`, composable with `+` |
 | `unit` | `str` | `"bps"` or `"price"` |
 | `by` | `str \| list[str] \| None` | Partition column(s) for per-symbol or per-venue computation |
+| `perspective` | `str` | `"taker"` or `"maker"`. Maker perspective negates the markout |
 
 ### Horizon constructors
 
@@ -192,14 +201,12 @@ mo.ticks_range(start=1, stop=50, step=5)
 
 ## Examples
 
-See the `examples/` directory for runnable notebooks:
+See the `examples/` directory for Jupyter notebooks:
 
-- `01_quickstart.py` — Synthetic data API walkthrough
-- `02_crypto_markouts.py` — Binance BTCUSDT markout analysis (Tardis.dev data)
-- `03_spread_decomposition.py` — AAPL effective/realized spread (LOBSTER data)
-- `04_information_leakage.py` — Pre-trade baseline detection (LOBSTER data)
-
-Open in VS Code or JupyterLab as interactive notebooks (percent format).
+- `01_quickstart.ipynb` — Synthetic data API walkthrough
+- `02_crypto_markouts.ipynb` — Binance BTCUSDT markout analysis (maker perspective)
+- `03_spread_decomposition.ipynb` — AAPL effective/realized spread (LOBSTER data)
+- `04_information_leakage.ipynb` — Pre-trade baseline detection (Binance data)
 
 ## Non-goals
 
@@ -211,7 +218,7 @@ Open in VS Code or JupyterLab as interactive notebooks (percent format).
 
 ## Roadmap
 
-- [ ] Rust-accelerated tick-clock joins via `pyo3-polars`
+- [x] Rust-accelerated tick-clock joins via PyO3
 - [ ] Async-aware session boundary handling
 - [ ] Configurable stale quote tolerance
 - [ ] Additional bootstrap methods (BCa, studentized)
@@ -231,6 +238,25 @@ pip install markoutlib[pandas]
 ```
 
 Requires Python 3.11+. Polars is the only required dependency.
+
+### Optional: Rust accelerator
+
+markoutlib includes an optional Rust extension that accelerates tick-clock computation. It is **not required** — the library falls back to numpy automatically.
+
+To build and install (requires Rust toolchain + maturin):
+
+```bash
+pip install maturin
+cd rust
+maturin develop --release
+```
+
+Verify it's active:
+
+```python
+from markoutlib._compute import _USE_NATIVE
+print(_USE_NATIVE)  # True if Rust extension is loaded
+```
 
 ## License
 
