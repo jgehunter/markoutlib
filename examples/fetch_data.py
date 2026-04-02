@@ -18,30 +18,43 @@ def _ensure_data_dir() -> Path:
     return DATA_DIR
 
 
-def fetch_tardis_crypto(
-    exchange: str = "binance",
-    data_type: str = "trades",
+def fetch_binance_aggtrades(
     symbol: str = "BTCUSDT",
-    year: int = 2024,
-    month: int = 1,
-    day: int = 1,
+    date: str = "2024-01-01",
 ) -> pl.DataFrame:
-    """Download Tardis.dev free first-of-month data."""
-    cache = (
-        _ensure_data_dir()
-        / f"tardis_{exchange}_{data_type}_{symbol}_{year}{month:02d}{day:02d}.csv.gz"
-    )
+    """Download Binance aggTrades from public data (data.binance.vision).
+
+    Returns a DataFrame with columns:
+        agg_trade_id, price, qty, first_trade_id, last_trade_id,
+        timestamp, is_buyer_maker, is_best_match
+    """
+    cache = _ensure_data_dir() / f"binance_aggTrades_{symbol}_{date}.csv"
     if not cache.exists():
         url = (
-            f"https://datasets.tardis.dev/v1/{exchange}/{data_type}"
-            f"/{year}/{month:02d}/{day:02d}/{symbol}.csv.gz"
+            f"https://data.binance.vision/data/spot/daily/aggTrades"
+            f"/{symbol}/{symbol}-aggTrades-{date}.zip"
         )
         print(f"Downloading {url} ...")
         resp = requests.get(url, timeout=120)
         resp.raise_for_status()
-        cache.write_bytes(resp.content)
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            csv_name = zf.namelist()[0]
+            cache.write_bytes(zf.read(csv_name))
         print(f"Saved to {cache}")
-    return pl.read_csv(cache)
+    return pl.read_csv(
+        cache,
+        has_header=False,
+        new_columns=[
+            "agg_trade_id",
+            "price",
+            "qty",
+            "first_trade_id",
+            "last_trade_id",
+            "timestamp",
+            "is_buyer_maker",
+            "is_best_match",
+        ],
+    )
 
 
 def fetch_lobster_sample(
@@ -58,7 +71,7 @@ def fetch_lobster_sample(
 
     if not msg_path.exists():
         url = (
-            f"https://lobsterdata.com/info/sample"
+            f"https://data.lobsterdata.com/info/sample"
             f"/LOBSTER_SampleFile_{symbol}_2012-06-21_{level}.zip"
         )
         print(f"Downloading {url} ...")
@@ -101,28 +114,64 @@ def fetch_lobster_sample(
     return messages, orderbook
 
 
-def prepare_tardis_trades(df: pl.DataFrame) -> pl.DataFrame:
-    """Convert Tardis trades to markoutlib format."""
-    return df.select(
-        (pl.col("timestamp") * 1000).cast(pl.Datetime("us")).alias("timestamp"),
-        pl.when(pl.col("side") == "buy").then(1).otherwise(-1).alias("side"),
+def prepare_binance_trades_and_quotes(
+    df: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Convert Binance aggTrades to markoutlib trades + quotes.
+
+    Since Binance public data has no BBO stream, we derive a synthetic
+    mid from the last buy and sell trade prices. This is standard
+    practice for crypto spot when order-book snapshots aren't available.
+
+    Returns (trades, quotes).
+    """
+    # Auto-detect timestamp resolution: ms (13 digits) vs us (16 digits)
+    ts_magnitude = df["timestamp"][0]
+    if ts_magnitude > 1e15:  # microseconds
+        ts_expr = pl.col("timestamp").cast(pl.Datetime("us"))
+    else:  # milliseconds
+        ts_expr = (pl.col("timestamp") * 1_000).cast(pl.Datetime("us"))
+
+    raw = df.select(
+        ts_expr.alias("timestamp"),
+        # is_buyer_maker=True means the taker sold -> side = -1
+        pl.when(pl.col("is_buyer_maker")).then(-1).otherwise(1).alias("side"),
         pl.col("price").cast(pl.Float64),
-        pl.col("amount").cast(pl.Float64).alias("size"),
+        pl.col("qty").cast(pl.Float64).alias("size"),
+    ).sort("timestamp")
+
+    # Derive a synthetic mid: rolling last-buy and last-sell prices
+    last_buy = (
+        pl.when(pl.col("side") == 1)
+        .then(pl.col("price"))
+        .otherwise(None)
+        .forward_fill()
+        .alias("_last_buy")
+    )
+    last_sell = (
+        pl.when(pl.col("side") == -1)
+        .then(pl.col("price"))
+        .otherwise(None)
+        .forward_fill()
+        .alias("_last_sell")
+    )
+    raw = raw.with_columns(last_buy, last_sell)
+
+    # Drop rows before we have both a buy and a sell
+    raw = raw.filter(
+        pl.col("_last_buy").is_not_null() & pl.col("_last_sell").is_not_null()
     )
 
-
-def prepare_tardis_quotes(df: pl.DataFrame) -> pl.DataFrame:
-    """Convert Tardis quotes to markoutlib format."""
-    return df.select(
-        (pl.col("timestamp") * 1000).cast(pl.Datetime("us")).alias("timestamp"),
-        (
-            (
-                pl.col("ask_price").cast(pl.Float64)
-                + pl.col("bid_price").cast(pl.Float64)
-            )
-            / 2
-        ).alias("mid"),
+    raw = raw.with_columns(
+        ((pl.col("_last_buy") + pl.col("_last_sell")) / 2).alias("mid")
     )
+
+    trades = raw.select("timestamp", "side", "price", "mid", "size")
+    quotes = (
+        raw.select("timestamp", "mid").unique(subset=["timestamp"]).sort("timestamp")
+    )
+
+    return trades, quotes
 
 
 def prepare_lobster(
@@ -146,9 +195,10 @@ def prepare_lobster(
     )
 
     # Trades: event types 4 (visible) and 5 (hidden)
+    # LOBSTER direction is the passive order's side; negate to get taker side.
     trades = combined.filter(pl.col("event_type").is_in([4, 5])).select(
         "timestamp",
-        pl.col("direction").alias("side"),
+        (-pl.col("direction")).alias("side"),
         pl.col("price_adj").alias("price"),
         "mid",
         pl.col("size").cast(pl.Float64).alias("size"),

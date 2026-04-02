@@ -506,3 +506,49 @@ def test_tick_clock_negative_insufficient():
     result = compute(trades=trades_df, quotes=quotes_df, horizons=ticks(-5))
     df = result.to_polars()
     assert df["future_mid"][0] is None
+
+
+def test_perspective_maker_negates_markout():
+    from markoutlib._compute import compute
+
+    trades, quotes = _make_known_answer_data()
+    taker = compute(trades=trades, quotes=quotes, horizons=seconds(5))
+    maker = compute(
+        trades=trades, quotes=quotes, horizons=seconds(5), perspective="maker"
+    )
+
+    taker_df = taker.to_polars()
+    maker_df = maker.to_polars()
+
+    # All markouts should be negated
+    t_marks = taker_df["markout"].drop_nulls().to_list()
+    m_marks = maker_df["markout"].drop_nulls().to_list()
+    assert len(t_marks) == len(m_marks)
+    for t, m in zip(t_marks, m_marks):
+        assert abs(t + m) < 1e-10, f"expected negation: taker={t}, maker={m}"
+
+
+def test_perspective_maker_preserves_future_mid():
+    from markoutlib._compute import compute
+
+    trades, quotes = _make_known_answer_data()
+    taker = compute(trades=trades, quotes=quotes, horizons=seconds(5))
+    maker = compute(
+        trades=trades, quotes=quotes, horizons=seconds(5), perspective="maker"
+    )
+
+    # future_mid should be identical — only markout sign changes
+    assert taker.to_polars()["future_mid"].to_list() == maker.to_polars()[
+        "future_mid"
+    ].to_list()
+
+
+def test_perspective_invalid_raises():
+    import pytest
+    from markoutlib._compute import compute
+
+    trades, quotes = _make_known_answer_data()
+    with pytest.raises(ValueError, match="perspective"):
+        compute(
+            trades=trades, quotes=quotes, horizons=seconds(5), perspective="neutral"
+        )

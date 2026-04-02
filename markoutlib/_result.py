@@ -29,9 +29,12 @@ _GROUP_KEYS = ["horizon_type", "horizon_value"]
 class MarkoutResult:
     """Holds per-trade markout data and provides analysis methods."""
 
-    def __init__(self, data: pl.DataFrame, unit: str) -> None:
+    def __init__(
+        self, data: pl.DataFrame, unit: str, perspective: str = "taker"
+    ) -> None:
         self._data = data
         self._unit = unit
+        self._perspective = perspective
 
     # ------------------------------------------------------------------
     # curve
@@ -282,22 +285,17 @@ class MarkoutResult:
                     }
                 )
 
-        # Benjamini-Hochberg correction.
+        # Benjamini-Hochberg correction (vectorised).
         m = len(rows)
         if m > 0:
             p_vals = np.array([r["test_p_value_raw"] for r in rows])
             order = np.argsort(p_vals)
+            ranks = np.arange(1, m + 1)
+            sorted_adjusted = np.minimum(p_vals[order] * m / ranks, 1.0)
+            # Enforce monotonicity via reverse cumulative minimum.
+            sorted_adjusted = np.minimum.accumulate(sorted_adjusted[::-1])[::-1]
             bh_adjusted = np.empty(m)
-            for rank_idx, orig_idx in enumerate(order):
-                rank = rank_idx + 1
-                bh_adjusted[orig_idx] = min(p_vals[orig_idx] * m / rank, 1.0)
-            # Enforce monotonicity.
-            for rank_idx in range(m - 2, -1, -1):
-                orig_idx = order[rank_idx]
-                next_idx = order[rank_idx + 1]
-                bh_adjusted[orig_idx] = min(
-                    bh_adjusted[orig_idx], bh_adjusted[next_idx]
-                )
+            bh_adjusted[order] = sorted_adjusted
             for i, row in enumerate(rows):
                 row["test_p_value_bh"] = float(bh_adjusted[i])
 

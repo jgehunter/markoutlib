@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import bisect
 from datetime import timedelta
 
+import numpy as np
 import polars as pl
 
 from markoutlib._compat import maybe_to_polars
@@ -219,44 +219,37 @@ def _compute_trade_clock(
 
 
 def _tick_clock_partition(
-    trade_timestamps: list[int],
-    quote_timestamps: list[int],
-    quote_mids: list[float],
+    trade_timestamps: list[int] | np.ndarray,
+    quote_timestamps: list[int] | np.ndarray,
+    quote_mids: list[float] | np.ndarray,
     n: int,
-) -> list[float | None]:
+) -> np.ndarray:
     """Compute tick-clock future mids for one partition.
 
     For n > 0: the n-th quote strictly after each trade.
     For n == 0: the last quote at or before each trade.
     For n < 0: the |n|-th quote before the last-at-or-before, counting backward.
-    """
-    result: list[float | None] = []
-    num_quotes = len(quote_timestamps)
-    for ts in trade_timestamps:
-        # idx = first quote strictly after the trade
-        idx = bisect.bisect_right(quote_timestamps, ts)
 
-        if n > 0:
-            target = idx + n - 1
-            if 0 <= target < num_quotes:
-                result.append(quote_mids[target])
-            else:
-                result.append(None)
-        elif n == 0:
-            # Last quote at or before trade
-            target = idx - 1
-            if target >= 0:
-                result.append(quote_mids[target])
-            else:
-                result.append(None)
-        else:
-            # Negative: count backward from last-at-or-before
-            last_before = idx - 1
-            target = last_before + n  # n is negative, so this subtracts
-            if target >= 0:
-                result.append(quote_mids[target])
-            else:
-                result.append(None)
+    Returns a float64 numpy array with NaN for out-of-bounds lookups.
+    """
+    quote_ts = np.asarray(quote_timestamps)
+    quote_m = np.asarray(quote_mids, dtype=np.float64)
+    trade_ts = np.asarray(trade_timestamps)
+    num_quotes = len(quote_ts)
+
+    # searchsorted 'right' = first index strictly after each trade (= bisect_right)
+    idx = np.searchsorted(quote_ts, trade_ts, side="right")
+
+    if n > 0:
+        targets = idx + (n - 1)
+    elif n == 0:
+        targets = idx - 1
+    else:
+        targets = (idx - 1) + n  # n is negative
+
+    valid = (targets >= 0) & (targets < num_quotes)
+    result = np.full(len(trade_ts), np.nan)
+    result[valid] = quote_m[targets[valid]]
     return result
 
 
@@ -284,7 +277,7 @@ def _compute_tick_clock(
 
     if by_cols:
         # Process each partition separately
-        future_mids: list[float | None] = [None] * trades.height
+        future_mids = np.full(trades.height, np.nan)
         trade_idx_col = "__trade_idx__"
         trades_indexed = trades.with_row_index(trade_idx_col)
 
@@ -300,26 +293,25 @@ def _compute_tick_clock(
                 q_filter = q_filter & (pl.col(col) == val)
             q_part = quotes.filter(q_filter).sort("timestamp")
 
-            q_ts = q_part["timestamp"].cast(pl.Int64).to_list()
-            q_mids = q_part["mid"].to_list()
-            t_ts = trades_group["timestamp"].cast(pl.Int64).to_list()
-            t_indices = trades_group[trade_idx_col].to_list()
+            q_ts = q_part["timestamp"].cast(pl.Int64).to_numpy()
+            q_mids = q_part["mid"].to_numpy()
+            t_ts = trades_group["timestamp"].cast(pl.Int64).to_numpy()
+            t_indices = trades_group[trade_idx_col].to_numpy()
 
             part_mids = _tick_clock_partition(t_ts, q_ts, q_mids, n)
-            for orig_idx, fm in zip(t_indices, part_mids, strict=True):
-                future_mids[orig_idx] = fm
+            future_mids[t_indices] = part_mids
 
         result = trades.with_columns(
-            pl.Series("future_mid", future_mids, dtype=pl.Float64),
+            pl.Series("future_mid", future_mids, dtype=pl.Float64, nan_to_null=True),
         )
     else:
-        q_ts = quotes["timestamp"].cast(pl.Int64).to_list()
-        q_mids = quotes["mid"].to_list()
-        t_ts = trades["timestamp"].cast(pl.Int64).to_list()
+        q_ts = quotes["timestamp"].cast(pl.Int64).to_numpy()
+        q_mids = quotes["mid"].to_numpy()
+        t_ts = trades["timestamp"].cast(pl.Int64).to_numpy()
 
-        future_mids_list = _tick_clock_partition(t_ts, q_ts, q_mids, n)
+        future_mids_arr = _tick_clock_partition(t_ts, q_ts, q_mids, n)
         result = trades.with_columns(
-            pl.Series("future_mid", future_mids_list, dtype=pl.Float64),
+            pl.Series("future_mid", future_mids_arr, dtype=pl.Float64, nan_to_null=True),
         )
 
     null_mid = pl.col("mid").is_null() | (pl.col("mid") == 0)
@@ -358,6 +350,7 @@ def compute(
     horizons: HorizonSet,
     unit: str = "bps",
     by: str | list[str] | None = None,
+    perspective: str = "taker",
 ) -> MarkoutResult:
     """Compute markout P&L for a set of trades against quote data.
 
@@ -369,6 +362,9 @@ def compute(
         horizons: Set of horizons specifying when to measure markout.
         unit: Output unit for markout values. One of "bps" or "price".
         by: Optional column name or list of column names to group results by.
+        perspective: Whose P&L to measure. "taker" (default) means positive
+            markout when price moves in the trade direction. "maker" flips
+            the sign so positive markout means the liquidity provider profited.
 
     Returns:
         MarkoutResult with markout data per trade per horizon.
@@ -376,8 +372,11 @@ def compute(
     Raises:
         ValueError: If required columns are missing, incompatible dtypes are
             detected, or configuration is invalid.
-        NotImplementedError: For trade-clock and tick-clock horizons.
     """
+    if perspective not in ("taker", "maker"):
+        msg = f"perspective must be 'taker' or 'maker', got {perspective!r}"
+        raise ValueError(msg)
+
     trades = maybe_to_polars(trades)
     if quotes is not None:
         quotes = maybe_to_polars(quotes)
@@ -406,4 +405,13 @@ def compute(
             results.append(chunk)
 
     combined = pl.concat(results) if len(results) > 1 else results[0]
-    return MarkoutResult(data=combined, unit=parsed_unit.value)
+
+    if perspective == "maker":
+        combined = combined.with_columns(
+            pl.when(pl.col("markout").is_not_null())
+            .then(-pl.col("markout"))
+            .otherwise(pl.lit(None, dtype=pl.Float64))
+            .alias("markout")
+        )
+
+    return MarkoutResult(data=combined, unit=parsed_unit.value, perspective=perspective)
