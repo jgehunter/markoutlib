@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 import polars as pl
+import pytest
 
 from markoutlib._horizons import seconds
 
@@ -544,7 +545,6 @@ def test_perspective_maker_preserves_future_mid():
 
 
 def test_perspective_invalid_raises():
-    import pytest
     from markoutlib._compute import compute
 
     trades, quotes = _make_known_answer_data()
@@ -552,3 +552,38 @@ def test_perspective_invalid_raises():
         compute(
             trades=trades, quotes=quotes, horizons=seconds(5), perspective="neutral"
         )
+
+
+def test_tick_clock_native_matches_numpy():
+    """When the Rust extension is available, verify it matches numpy."""
+    import numpy as np
+    from markoutlib._compute import (
+        _tick_clock_partition_np,
+        _USE_NATIVE,
+    )
+
+    if not _USE_NATIVE:
+        pytest.skip("Rust extension not installed")
+
+    from _markoutlib_native import tick_clock_partition as rs_fn
+
+    rng = np.random.default_rng(42)
+    n_trades = 10_000
+    n_quotes = 50_000
+
+    trade_ts = np.sort(rng.integers(0, 1_000_000, size=n_trades)).astype(np.int64)
+    quote_ts = np.sort(rng.integers(0, 1_000_000, size=n_quotes)).astype(np.int64)
+    quote_mids = rng.uniform(99.0, 101.0, size=n_quotes)
+
+    for n in [-5, -1, 0, 1, 5, 50]:
+        np_result = _tick_clock_partition_np(trade_ts, quote_ts, quote_mids, n)
+        rs_result = np.asarray(rs_fn(trade_ts, quote_ts, quote_mids, n))
+
+        # Both should be NaN in the same positions
+        np_nan = np.isnan(np_result)
+        rs_nan = np.isnan(rs_result)
+        assert np.array_equal(np_nan, rs_nan), f"NaN mismatch at n={n}"
+
+        # Non-NaN values should be identical
+        valid = ~np_nan
+        assert np.allclose(np_result[valid], rs_result[valid]), f"Value mismatch at n={n}"
