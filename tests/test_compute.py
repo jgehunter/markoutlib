@@ -525,7 +525,7 @@ def test_perspective_maker_negates_markout():
     t_marks = taker_df["markout"].drop_nulls().to_list()
     m_marks = maker_df["markout"].drop_nulls().to_list()
     assert len(t_marks) == len(m_marks)
-    for t, m in zip(t_marks, m_marks):
+    for t, m in zip(t_marks, m_marks, strict=True):
         assert abs(t + m) < 1e-10, f"expected negation: taker={t}, maker={m}"
 
 
@@ -539,9 +539,10 @@ def test_perspective_maker_preserves_future_mid():
     )
 
     # future_mid should be identical — only markout sign changes
-    assert taker.to_polars()["future_mid"].to_list() == maker.to_polars()[
-        "future_mid"
-    ].to_list()
+    assert (
+        taker.to_polars()["future_mid"].to_list()
+        == maker.to_polars()["future_mid"].to_list()
+    )
 
 
 def test_perspective_invalid_raises():
@@ -557,9 +558,10 @@ def test_perspective_invalid_raises():
 def test_tick_clock_native_matches_numpy():
     """When the Rust extension is available, verify it matches numpy."""
     import numpy as np
+
     from markoutlib._compute import (
-        _tick_clock_partition_np,
         _USE_NATIVE,
+        _tick_clock_partition_np,
     )
 
     if not _USE_NATIVE:
@@ -586,4 +588,7 @@ def test_tick_clock_native_matches_numpy():
 
         # Non-NaN values should be identical
         valid = ~np_nan
-        assert np.allclose(np_result[valid], rs_result[valid]), f"Value mismatch at n={n}"
+        assert np.allclose(
+            np_result[valid],
+            rs_result[valid],
+        ), f"Value mismatch at n={n}"

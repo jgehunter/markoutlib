@@ -1,6 +1,6 @@
 """Markout P&L analysis for Python."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from markoutlib._compute import compute
 from markoutlib._horizons import (

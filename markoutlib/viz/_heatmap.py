@@ -43,7 +43,9 @@ def plot_heatmap(result: MarkoutResult, *, by: str) -> go.Figure:
 
     segments = pivot[by].to_list()
     # Preserve the original horizon ordering from curve_df
-    ordered_labels = curve_df.select("_hlabel").unique(maintain_order=True).to_series().to_list()
+    ordered_labels = (
+        curve_df.select("_hlabel").unique(maintain_order=True).to_series().to_list()
+    )
     horizon_cols = [c for c in ordered_labels if c in pivot.columns]
     horizon_labels = horizon_cols
 

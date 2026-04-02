@@ -21,6 +21,7 @@ try:
     from _markoutlib_native import (
         tick_clock_partition as _tick_clock_partition_rs,
     )
+
     _USE_NATIVE = True
 except ImportError:
     _USE_NATIVE = False
@@ -334,7 +335,12 @@ def _compute_tick_clock(
 
         future_mids_arr = _tick_clock_partition(t_ts, q_ts, q_mids, n)
         result = trades.with_columns(
-            pl.Series("future_mid", future_mids_arr, dtype=pl.Float64, nan_to_null=True),
+            pl.Series(
+                "future_mid",
+                future_mids_arr,
+                dtype=pl.Float64,
+                nan_to_null=True,
+            ),
         )
 
     null_mid = pl.col("mid").is_null() | (pl.col("mid") == 0)

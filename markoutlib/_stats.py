@@ -160,15 +160,15 @@ def _bootstrap_means_prefixsum(
         bsums_dw = np.empty(len(starts))
         bsums_dw[no_wrap] = cumsum_dw[ends[no_wrap]] - cumsum_dw[starts[no_wrap]]
         if np.any(wrap):
-            bsums_dw[wrap] = (
-                (cumsum_dw[n] - cumsum_dw[starts[wrap]]) + cumsum_dw[ends[wrap] - n]
-            )
+            bsums_dw[wrap] = (cumsum_dw[n] - cumsum_dw[starts[wrap]]) + cumsum_dw[
+                ends[wrap] - n
+            ]
         bsums_w = np.empty(len(starts))
         bsums_w[no_wrap] = cumsum_w[ends[no_wrap]] - cumsum_w[starts[no_wrap]]
         if np.any(wrap):
-            bsums_w[wrap] = (
-                (cumsum_w[n] - cumsum_w[starts[wrap]]) + cumsum_w[ends[wrap] - n]
-            )
+            bsums_w[wrap] = (cumsum_w[n] - cumsum_w[starts[wrap]]) + cumsum_w[
+                ends[wrap] - n
+            ]
         total_dw = np.add.reduceat(bsums_dw, resample_starts)
         total_w = np.add.reduceat(bsums_w, resample_starts)
         means = np.where(total_w > 0, total_dw / total_w, 0.0)
@@ -225,7 +225,10 @@ def block_bootstrap_ci(
         cumsum_d,
         cumsum_w if weights is not None else None,
         cumsum_dw if weights is not None else None,
-        n, n_bootstrap, p_geom, rng,
+        n,
+        n_bootstrap,
+        p_geom,
+        rng,
     )
 
     alpha = 1.0 - ci_level

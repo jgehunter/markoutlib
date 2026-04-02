@@ -4,25 +4,45 @@ build-backend = "hatchling.build"
 
 [project]
 name = "markoutlib"
-version = "0.1.0"
-description = "Markout P&L analysis for Python"
+version = "0.3.0"
+description = "Markout P&L analysis for Python. Polars-native. Instrument-agnostic. Statistically rigorous."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+authors = [
+    { name = "Jorge Hunter" },
+]
+keywords = [
+    "markout",
+    "market-microstructure",
+    "adverse-selection",
+    "spread-decomposition",
+    "execution-quality",
+    "polars",
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
+    "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Typing :: Typed",
 ]
 dependencies = [
     "polars>=1.0,<2.0",
     "plotly>=5.0",
     "scipy>=1.11",
+    "numpy>=1.24",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jgehunter/markoutlib"
+Repository = "https://github.com/jgehunter/markoutlib"
+Issues = "https://github.com/jgehunter/markoutlib/issues"
 
 [project.optional-dependencies]
 pandas = ["pandas>=2.0", "pyarrow>=14.0"]
