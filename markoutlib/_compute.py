@@ -17,6 +17,14 @@ from markoutlib._types import (
     Unit,
 )
 
+try:
+    from _markoutlib_native import (
+        tick_clock_partition as _tick_clock_partition_rs,
+    )
+    _USE_NATIVE = True
+except ImportError:
+    _USE_NATIVE = False
+
 
 def _validate_inputs(
     trades: pl.DataFrame,
@@ -218,13 +226,13 @@ def _compute_trade_clock(
     )
 
 
-def _tick_clock_partition(
+def _tick_clock_partition_np(
     trade_timestamps: list[int] | np.ndarray,
     quote_timestamps: list[int] | np.ndarray,
     quote_mids: list[float] | np.ndarray,
     n: int,
 ) -> np.ndarray:
-    """Compute tick-clock future mids for one partition.
+    """Compute tick-clock future mids for one partition (numpy implementation).
 
     For n > 0: the n-th quote strictly after each trade.
     For n == 0: the last quote at or before each trade.
@@ -251,6 +259,21 @@ def _tick_clock_partition(
     result = np.full(len(trade_ts), np.nan)
     result[valid] = quote_m[targets[valid]]
     return result
+
+
+def _tick_clock_partition(
+    trade_timestamps: list[int] | np.ndarray,
+    quote_timestamps: list[int] | np.ndarray,
+    quote_mids: list[float] | np.ndarray,
+    n: int,
+) -> np.ndarray:
+    """Dispatch to Rust or numpy tick-clock implementation."""
+    t_ts = np.asarray(trade_timestamps, dtype=np.int64)
+    q_ts = np.asarray(quote_timestamps, dtype=np.int64)
+    q_m = np.asarray(quote_mids, dtype=np.float64)
+    if _USE_NATIVE:
+        return np.asarray(_tick_clock_partition_rs(t_ts, q_ts, q_m, n))
+    return _tick_clock_partition_np(t_ts, q_ts, q_m, n)
 
 
 def _compute_tick_clock(
